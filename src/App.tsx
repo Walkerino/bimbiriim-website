@@ -1106,6 +1106,10 @@ function App() {
   const editablePage = pages[locale];
   const savedPage = savedPages[locale];
 
+  useEffect(() => {
+    document.documentElement.lang = locale;
+  }, [locale]);
+
   const sections = useMemo(
     () => normalizeSectionOrder(currentPage.sections),
     [currentPage.sections]
@@ -2556,7 +2560,7 @@ function App() {
   };
 
   return (
-    <div className="site" data-node-id="4003:55">
+    <div className={`site locale-${locale}`} data-node-id="4003:55">
       {adminLoginForm}
       {adminToolbar}
       {renderSelectedSectionSettings()}

@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@200..800&display=swap&subset=cyrillic');
+
 @font-face {
   font-family: 'Switzer';
   src: url('/fonts/Switzer-Variable.woff2') format('woff2');
@@ -26,6 +28,8 @@
   --border: #ffffff;
   --container: 1240px;
   --hero-word-gap: 26px;
+  --font-primary: 'Switzer', sans-serif;
+  --font-cyrillic: 'Manrope', 'Switzer', sans-serif;
 }
 
 * {
@@ -39,7 +43,7 @@ html {
 body {
   margin: 0;
   min-width: 320px;
-  font-family: 'Switzer', sans-serif;
+  font-family: var(--font-primary);
   background: var(--bg-main);
   color: var(--text-main);
 }
@@ -55,6 +59,10 @@ button {
 
 .site {
   overflow-x: hidden;
+}
+
+.site.locale-ru {
+  font-family: var(--font-cyrillic);
 }
 
 .section-wrap {
