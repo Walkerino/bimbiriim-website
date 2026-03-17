@@ -1085,7 +1085,7 @@ function AddSectionInsertion({ isAdminMode, onAdd }: AddSectionInsertionProps) {
 }
 
 function App() {
-  const [locale, setLocale] = useState<Locale>('en');
+  const locale: Locale = 'ru';
   const [pages, setPages] = useState<Record<Locale, PageData>>(() => buildInitialPages());
   const [publishedPages, setPublishedPages] = useState<Record<Locale, PageData>>(() =>
     buildInitialPages()
@@ -1153,38 +1153,26 @@ function App() {
     const syncFromServer = async () => {
       setIsSyncing(true);
       try {
-        const [enContent, ruContent] = await Promise.all([
-          fetchContentFromServer('en'),
-          fetchContentFromServer('ru')
-        ]);
-
-        const merged = {
-          en: {
-            published: normalizeServerPage(enContent.published, 'en'),
-            draft: normalizeServerPage(enContent.draft ?? enContent.published, 'en')
-          },
-          ru: {
-            published: normalizeServerPage(ruContent.published, 'ru'),
-            draft: normalizeServerPage(ruContent.draft ?? ruContent.published, 'ru')
-          }
-        };
+        const response = await fetchContentFromServer(locale);
+        const nextPublished = normalizeServerPage(response.published, locale);
+        const nextDraft = normalizeServerPage(response.draft ?? response.published, locale);
 
         if (cancelled) {
           return;
         }
 
-        setPublishedPages({
-          en: merged.en.published,
-          ru: merged.ru.published
-        });
-        setPages({
-          en: cloneDeep(merged.en.draft),
-          ru: cloneDeep(merged.ru.draft)
-        });
-        setSavedPages({
-          en: cloneDeep(merged.en.draft),
-          ru: cloneDeep(merged.ru.draft)
-        });
+        setPublishedPages((previous) => ({
+          ...previous,
+          [locale]: nextPublished
+        }));
+        setPages((previous) => ({
+          ...previous,
+          [locale]: cloneDeep(nextDraft)
+        }));
+        setSavedPages((previous) => ({
+          ...previous,
+          [locale]: cloneDeep(nextDraft)
+        }));
         setPublishMessage('Server content loaded');
       } catch (error) {
         if (cancelled) {
@@ -2588,22 +2576,6 @@ function App() {
             <a className="btn btn-outline" href="#contact">
               {translation.nav.contact}
             </a>
-            <div className="lang-switch" role="group" aria-label="Language switch">
-              <button
-                type="button"
-                className={locale === 'en' ? 'active' : ''}
-                onClick={() => setLocale('en')}
-              >
-                EN
-              </button>
-              <button
-                type="button"
-                className={locale === 'ru' ? 'active' : ''}
-                onClick={() => setLocale('ru')}
-              >
-                RU
-              </button>
-            </div>
           </div>
         </div>
       </header>

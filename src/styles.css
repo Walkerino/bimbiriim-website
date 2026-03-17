@@ -190,29 +190,6 @@ button {
   font-size: 20px;
 }
 
-.lang-switch {
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  border-radius: 8px;
-  overflow: hidden;
-  display: flex;
-}
-
-.lang-switch button {
-  border: 0;
-  background: transparent;
-  color: #fff;
-  min-width: 46px;
-  height: 44px;
-  cursor: pointer;
-  font-size: 14px;
-  letter-spacing: 0.04em;
-}
-
-.lang-switch button.active {
-  background: #fff;
-  color: #111;
-}
-
 .hero {
   min-height: 740px;
 }
