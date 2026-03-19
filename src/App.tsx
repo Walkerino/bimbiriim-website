@@ -95,6 +95,7 @@ type Translation = {
   };
   project: {
     back: string;
+    backToHome: string;
   };
   footer: {
     signature: string;
@@ -123,7 +124,8 @@ const translations: Record<Locale, Translation> = {
       closeMenu: 'Close menu'
     },
     project: {
-      back: 'Back to works'
+      back: 'Back to works',
+      backToHome: 'Back to home'
     },
     footer: {
       signature: 'Islam Gainullin. Designer & Developer',
@@ -258,7 +260,8 @@ const translations: Record<Locale, Translation> = {
       closeMenu: 'Закрыть меню'
     },
     project: {
-      back: 'Назад к работам'
+      back: 'Назад к работам',
+      backToHome: 'На главную'
     },
     footer: {
       signature: 'Islam Gainullin. Designer & Developer',
@@ -1189,6 +1192,7 @@ function App() {
   const [savedPages, setSavedPages] = useState<Record<Locale, PageData>>(() => buildInitialPages());
   const [selectedSectionId, setSelectedSectionId] = useState<string | null>(null);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+  const [isWorksPageOpen, setIsWorksPageOpen] = useState(false);
   const [activeServiceBySection, setActiveServiceBySection] = useState<Record<string, string>>({});
   const [roleIndex, setRoleIndex] = useState(0);
   const [typedRole, setTypedRole] = useState('');
@@ -1238,6 +1242,7 @@ function App() {
   const firstWorksSection = sections.find((section): section is WorksSection => section.type === 'works');
 
   const worksItems = firstWorksSection?.props.items ?? [];
+  const worksTitle = firstWorksSection?.props.title ?? translation.nav.work;
   const activeProject = worksItems.find((item) => item.id === activeProjectId) ?? null;
 
   const hasUnsavedChanges = useMemo(() => {
@@ -1612,7 +1617,7 @@ function App() {
 
   useEffect(() => {
     setIsMobileMenuOpen(false);
-  }, [activeProjectId]);
+  }, [activeProjectId, isWorksPageOpen]);
 
   useEffect(() => {
     setRoleIndex(0);
@@ -1666,9 +1671,54 @@ function App() {
     };
   }, [admin.isAdminMode, firstHeroSection?.props.roles, roleIndex]);
 
+  const openProject = (projectId: string) => {
+    setIsMobileMenuOpen(false);
+    setActiveProjectId(projectId);
+  };
+
+  const openWorksPage = () => {
+    setIsMobileMenuOpen(false);
+    setActiveProjectId(null);
+    setIsWorksPageOpen(true);
+    window.setTimeout(() => {
+      document.getElementById('all-works')?.scrollIntoView({ behavior: 'smooth' });
+    }, 0);
+  };
+
+  const closeWorksPage = () => {
+    setIsMobileMenuOpen(false);
+    setActiveProjectId(null);
+    setIsWorksPageOpen(false);
+    window.setTimeout(() => {
+      document.getElementById('works')?.scrollIntoView({ behavior: 'smooth' });
+    }, 0);
+  };
+
+  const openMainContent = () => {
+    setIsMobileMenuOpen(false);
+    setActiveProjectId(null);
+    setIsWorksPageOpen(false);
+  };
+
+  const navigateToMainSection =
+    (sectionId: string) => (event: React.MouseEvent<HTMLAnchorElement | HTMLButtonElement>) => {
+      event.preventDefault();
+      openMainContent();
+      window.setTimeout(() => {
+        document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth' });
+      }, 0);
+    };
+
   const closeProject = () => {
     setIsMobileMenuOpen(false);
     setActiveProjectId(null);
+    if (isWorksPageOpen) {
+      window.setTimeout(() => {
+        document.getElementById('all-works')?.scrollIntoView({ behavior: 'smooth' });
+      }, 0);
+      return;
+    }
+
     window.setTimeout(() => {
       document.getElementById('works')?.scrollIntoView({ behavior: 'smooth' });
     }, 0);
@@ -1874,7 +1924,15 @@ function App() {
                   adminMode={admin.isAdminMode}
                   onChange={(value) => patchWorks(section.id, (props) => ({ ...props, title: value }))}
                 />
-                <button type="button" className="btn btn-outline subtle">
+                <button
+                  type="button"
+                  className="btn btn-outline subtle"
+                  onClick={() => {
+                    if (!admin.isAdminMode) {
+                      openWorksPage();
+                    }
+                  }}
+                >
                   <EditableText
                     as="span"
                     value={section.props.viewAll}
@@ -1894,7 +1952,7 @@ function App() {
                     type="button"
                     onClick={() => {
                       if (!admin.isAdminMode) {
-                        setActiveProjectId(item.id);
+                        openProject(item.id);
                       }
                     }}
                     aria-label={`Open ${item.title} project`}
@@ -2386,7 +2444,7 @@ function App() {
               <button
                 type="button"
                 className="admin-chip"
-                onClick={() => setActiveProjectId(work.id)}
+                onClick={() => openProject(work.id)}
               >
                 Open project page editor
               </button>
@@ -2725,7 +2783,7 @@ function App() {
             className="brand"
             href="#top"
             aria-label="Homepage"
-            onClick={() => setIsMobileMenuOpen(false)}
+            onClick={navigateToMainSection('top')}
           >
             <span className="brand-main">Islam Gainullin</span>
             <span className="brand-sub">aka. bimbiriim</span>
@@ -2747,16 +2805,16 @@ function App() {
 
           <div className={`header-menu${isMobileMenuOpen ? ' open' : ''}`}>
             <nav className="main-nav" id="main-navigation" aria-label="Main navigation">
-              <a href="#works" onClick={() => setIsMobileMenuOpen(false)}>
+              <a href="#works" onClick={navigateToMainSection('works')}>
                 {translation.nav.work}
               </a>
-              <a href="#services" onClick={() => setIsMobileMenuOpen(false)}>
+              <a href="#services" onClick={navigateToMainSection('services')}>
                 {translation.nav.services}
               </a>
-              <a href="#reviews" onClick={() => setIsMobileMenuOpen(false)}>
+              <a href="#reviews" onClick={navigateToMainSection('reviews')}>
                 {translation.nav.reviews}
               </a>
-              <a href="#contact" onClick={() => setIsMobileMenuOpen(false)}>
+              <a href="#contact" onClick={navigateToMainSection('contact')}>
                 {translation.nav.contact}
               </a>
             </nav>
@@ -2767,7 +2825,7 @@ function App() {
                 href="/Islam_Gainullin_Resume.pdf"
                 target="_blank"
                 rel="noreferrer"
-                onClick={() => setIsMobileMenuOpen(false)}
+                onClick={openMainContent}
               >
                 <span>{translation.nav.resume}</span>
                 <img src="/assets/icon-download.svg" alt="" aria-hidden="true" />
@@ -2809,6 +2867,44 @@ function App() {
                       fetchPriority={index === 0 ? 'high' : 'low'}
                     />
                   </div>
+                ))}
+              </div>
+            </div>
+          </section>
+        ) : isWorksPageOpen ? (
+          <section className="works-page section-light" id="all-works">
+            <div className="section-wrap">
+              <div className="project-controls">
+                <button type="button" className="btn btn-outline subtle" onClick={closeWorksPage}>
+                  {translation.project.backToHome}
+                </button>
+              </div>
+
+              <div className="section-head">
+                <h2>{worksTitle}</h2>
+              </div>
+
+              <div className="works-grid" aria-label="All works">
+                {worksItems.map((item, itemIndex) => (
+                  <button
+                    className="work-card"
+                    key={`all-works-${item.id}-${itemIndex}`}
+                    type="button"
+                    onClick={() => openProject(item.id)}
+                    aria-label={`Open ${item.title} project`}
+                  >
+                    <div className="work-image-wrap">
+                      <OptimizedImage
+                        src={item.image}
+                        alt={item.title}
+                        loading="lazy"
+                        decoding="async"
+                        fetchPriority="low"
+                      />
+                    </div>
+                    <h3>{item.title}</h3>
+                    <p>{item.category}</p>
+                  </button>
                 ))}
               </div>
             </div>

@@ -349,7 +349,8 @@ button {
   margin-top: 56px;
 }
 
-.works {
+.works,
+.works-page {
   padding: 88px 0 100px;
 }
 
@@ -362,6 +363,7 @@ button {
 }
 
 .works h2,
+.works-page h2,
 .services h2,
 .reviews h2,
 .cta h2 {
@@ -1161,6 +1163,7 @@ button {
   }
 
   .works,
+  .works-page,
   .services,
   .reviews,
   .cta {
