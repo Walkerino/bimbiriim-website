@@ -623,6 +623,25 @@ function createId(prefix: string): string {
   return `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function collectProjectMedia(image: string, gallery: string[]): string[] {
+  const ordered = [image, ...gallery];
+  const seen = new Set<string>();
+
+  return ordered.filter((src) => {
+    if (typeof src !== 'string') {
+      return false;
+    }
+
+    const normalized = src.trim();
+    if (!normalized || seen.has(normalized)) {
+      return false;
+    }
+
+    seen.add(normalized);
+    return true;
+  });
+}
+
 function normalizeSectionOrder(sections: PageSection[]): PageSection[] {
   return [...sections]
     .sort((a, b) => a.order - b.order)
@@ -2779,25 +2798,15 @@ function App() {
                 <p className="project-description">{activeProject.description}</p>
               </div>
 
-              <div className="project-cover">
-                <OptimizedImage
-                  src={activeProject.image}
-                  alt={`${activeProject.title} preview`}
-                  loading="eager"
-                  decoding="async"
-                  fetchPriority="high"
-                />
-              </div>
-
-              <div className="project-gallery" aria-label="Project gallery">
-                {activeProject.gallery.map((image, index) => (
-                  <div className="project-gallery-item" key={`${image}-${index}`}>
+              <div className="project-media-stack" aria-label="Project gallery">
+                {collectProjectMedia(activeProject.image, activeProject.gallery).map((image, index) => (
+                  <div className="project-media-item" key={`${image}-${index}`}>
                     <OptimizedImage
                       src={image}
-                      alt={`${activeProject.title} case ${index + 1}`}
-                      loading="lazy"
+                      alt={`${activeProject.title} image ${index + 1}`}
+                      loading={index === 0 ? 'eager' : 'lazy'}
                       decoding="async"
-                      fetchPriority="low"
+                      fetchPriority={index === 0 ? 'high' : 'low'}
                     />
                   </div>
                 ))}
