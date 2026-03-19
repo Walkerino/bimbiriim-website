@@ -1236,6 +1236,7 @@ function App() {
   const [typedRole, setTypedRole] = useState('');
   const [publishMessage, setPublishMessage] = useState('');
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [passwordInput, setPasswordInput] = useState('');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
@@ -1322,6 +1323,7 @@ function App() {
       } finally {
         if (!cancelled) {
           setIsSyncing(false);
+          setIsInitialLoading(false);
         }
       }
     };
@@ -2942,6 +2944,14 @@ function App() {
       </aside>
     );
   };
+
+  if (isInitialLoading) {
+    return (
+      <div className={`site-preloader locale-${locale}`} role="status" aria-live="polite" aria-busy="true">
+        <span className="site-preloader-spinner" aria-hidden="true" />
+      </div>
+    );
+  }
 
   return (
     <div className={`site locale-${locale}`} data-node-id="4003:55">
