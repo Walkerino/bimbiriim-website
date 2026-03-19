@@ -53,11 +53,12 @@ Workflow trigger:
 
 Required GitHub repository secrets:
 
-1. `SERVER_HOST` (server IP/domain)
-2. `SERVER_USER` (SSH user)
-3. `SERVER_SSH_KEY` (private key content for that user)
-4. `SERVER_DEPLOY_PATH` (target path on server, e.g. `/opt/bimbiriim-website`)
-5. `SERVER_PORT` (optional, default `22`)
+1. `SERVER_USER` (SSH user)
+2. `SERVER_SSH_KEY` (private key content for that user)
+3. `SERVER_DEPLOY_PATH` (target path on server, e.g. `/opt/bimbiriim-website`)
+4. `SERVER_PORT` (optional, default `22`)
+
+Target host is currently hardcoded in workflow to `212.80.7.115`.
 
 Server prerequisites:
 
