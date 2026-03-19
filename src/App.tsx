@@ -447,6 +447,12 @@ async function requestJson<T>(input: string, init?: RequestInit): Promise<T> {
   }
 
   if (!response.ok) {
+    if (response.status === 413) {
+      throw new Error(
+        'Publish payload is too large. Reduce image sizes in content or increase Nginx `client_max_body_size`.'
+      );
+    }
+
     const responseText = await response.text();
     let serverMessage = '';
 
@@ -876,11 +882,69 @@ type EditableImageProps = {
   alt: string;
   className?: string;
   loading?: 'eager' | 'lazy';
+  decoding?: 'async' | 'sync' | 'auto';
+  fetchPriority?: 'high' | 'low' | 'auto';
   adminMode: boolean;
   onChange: (nextSrc: string) => void;
 };
 
-function EditableImage({ src, alt, className, loading, adminMode, onChange }: EditableImageProps) {
+function buildLocalWebpVariant(src: string): string | null {
+  if (!src.startsWith('/assets/')) {
+    return null;
+  }
+
+  const match = src.match(/^([^?#]+)\.(png|jpe?g)([?#].*)?$/i);
+  if (!match) {
+    return null;
+  }
+
+  return `${match[1]}.webp${match[3] ?? ''}`;
+}
+
+type OptimizedImageProps = {
+  src: string;
+  alt: string;
+  className?: string;
+  loading?: 'eager' | 'lazy';
+  decoding?: 'async' | 'sync' | 'auto';
+  fetchPriority?: 'high' | 'low' | 'auto';
+};
+
+function OptimizedImage({
+  src,
+  alt,
+  className,
+  loading,
+  decoding = 'async',
+  fetchPriority
+}: OptimizedImageProps) {
+  const webpVariant = buildLocalWebpVariant(src);
+
+  return (
+    <picture className="optimized-image">
+      {webpVariant ? <source srcSet={webpVariant} type="image/webp" /> : null}
+      <img
+        src={src}
+        alt={alt}
+        className={className}
+        loading={loading}
+        decoding={decoding}
+        fetchPriority={fetchPriority}
+      />
+    </picture>
+  );
+}
+
+function EditableImage({
+  src,
+  alt,
+  className,
+  loading,
+  decoding = 'async',
+  fetchPriority,
+  adminMode,
+  onChange
+}: EditableImageProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -908,7 +972,14 @@ function EditableImage({ src, alt, className, loading, adminMode, onChange }: Ed
 
   return (
     <span className={`editable-image${adminMode ? ' editable-image-admin' : ''}`}>
-      <img src={src} alt={alt} className={className} loading={loading} />
+      <OptimizedImage
+        src={src}
+        alt={alt}
+        className={className}
+        loading={loading}
+        decoding={decoding}
+        fetchPriority={fetchPriority}
+      />
       {adminMode ? (
         <span className="editable-image-controls">
           <button type="button" onClick={() => inputRef.current?.click()}>
@@ -1694,6 +1765,9 @@ function App() {
                     <EditableImage
                       src={section.props.accentImage}
                       alt=""
+                      loading="eager"
+                      decoding="async"
+                      fetchPriority="high"
                       adminMode={admin.isAdminMode}
                       onChange={(nextSrc) => patchHero(section.id, (props) => ({ ...props, accentImage: nextSrc }))}
                     />
@@ -1811,6 +1885,8 @@ function App() {
                         src={item.image}
                         alt={item.title}
                         loading="lazy"
+                        decoding="async"
+                        fetchPriority="low"
                         adminMode={admin.isAdminMode}
                         onChange={(nextSrc) =>
                           patchWorks(section.id, (props) => ({
@@ -2009,6 +2085,8 @@ function App() {
                           src={review.avatar || DEFAULT_REVIEW_AVATAR}
                           alt={review.author}
                           loading="lazy"
+                          decoding="async"
+                          fetchPriority="low"
                           adminMode={admin.isAdminMode}
                           onChange={(nextSrc) =>
                             patchReviews(section.id, (props) => ({
@@ -2702,13 +2780,25 @@ function App() {
               </div>
 
               <div className="project-cover">
-                <img src={activeProject.image} alt={`${activeProject.title} preview`} />
+                <OptimizedImage
+                  src={activeProject.image}
+                  alt={`${activeProject.title} preview`}
+                  loading="eager"
+                  decoding="async"
+                  fetchPriority="high"
+                />
               </div>
 
               <div className="project-gallery" aria-label="Project gallery">
                 {activeProject.gallery.map((image, index) => (
                   <div className="project-gallery-item" key={`${image}-${index}`}>
-                    <img src={image} alt={`${activeProject.title} case ${index + 1}`} loading="lazy" />
+                    <OptimizedImage
+                      src={image}
+                      alt={`${activeProject.title} case ${index + 1}`}
+                      loading="lazy"
+                      decoding="async"
+                      fetchPriority="low"
+                    />
                   </div>
                 ))}
               </div>

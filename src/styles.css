@@ -69,6 +69,10 @@ button {
   font-family: var(--font-cyrillic);
 }
 
+.optimized-image {
+  display: block;
+}
+
 .section-wrap {
   width: min(100% - 40px, var(--container));
   margin: 0 auto;
@@ -881,6 +885,10 @@ button {
 
 .editable-image {
   position: relative;
+  display: block;
+}
+
+.editable-image picture {
   display: block;
 }
 
