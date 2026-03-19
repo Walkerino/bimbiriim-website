@@ -90,6 +90,8 @@ type Translation = {
     reviews: string;
     resume: string;
     contact: string;
+    openMenu: string;
+    closeMenu: string;
   };
   project: {
     back: string;
@@ -116,7 +118,9 @@ const translations: Record<Locale, Translation> = {
       services: 'Services',
       reviews: 'Reviews',
       resume: 'Resume',
-      contact: 'Contact'
+      contact: 'Contact',
+      openMenu: 'Open menu',
+      closeMenu: 'Close menu'
     },
     project: {
       back: 'Back to works'
@@ -249,14 +253,16 @@ const translations: Record<Locale, Translation> = {
       services: 'Услуги',
       reviews: 'Отзывы',
       resume: 'Резюме',
-      contact: 'Контакты'
+      contact: 'Контакты',
+      openMenu: 'Открыть меню',
+      closeMenu: 'Закрыть меню'
     },
     project: {
       back: 'Назад к работам'
     },
     footer: {
       signature: 'Islam Gainullin. Designer & Developer',
-      licenses: 'Лицензии'
+      licenses: ''
     },
     defaults: {
       hero: {
@@ -380,7 +386,7 @@ const translations: Record<Locale, Translation> = {
 
 const socials = [
   { label: 'Instagram', href: 'https://instagram.com/bimbiriim' },
-  { label: 'Behance', href: 'https://behance.net/bimbiriim' },
+  { label: 'Dprofile', href: 'https://dprofile.ru/bimbiriim' },
   { label: 'Telegram', href: 'https://t.me/bimbiriim' }
 ];
 
@@ -1099,6 +1105,7 @@ function App() {
   const [publishMessage, setPublishMessage] = useState('');
   const [isSyncing, setIsSyncing] = useState(false);
   const [passwordInput, setPasswordInput] = useState('');
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   const admin = useAdminMode();
   const translation = translations[locale];
@@ -1468,6 +1475,56 @@ function App() {
   }, [activeProjectId, worksItems]);
 
   useEffect(() => {
+    if (typeof document === 'undefined') {
+      return;
+    }
+
+    document.body.classList.toggle('menu-open', isMobileMenuOpen);
+    return () => {
+      document.body.classList.remove('menu-open');
+    };
+  }, [isMobileMenuOpen]);
+
+  useEffect(() => {
+    if (!isMobileMenuOpen) {
+      return;
+    }
+
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsMobileMenuOpen(false);
+      }
+    };
+
+    window.addEventListener('keydown', closeOnEscape);
+    return () => {
+      window.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [isMobileMenuOpen]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const closeOnDesktop = () => {
+      if (window.innerWidth > 980) {
+        setIsMobileMenuOpen(false);
+      }
+    };
+
+    closeOnDesktop();
+    window.addEventListener('resize', closeOnDesktop);
+    return () => {
+      window.removeEventListener('resize', closeOnDesktop);
+    };
+  }, []);
+
+  useEffect(() => {
+    setIsMobileMenuOpen(false);
+  }, [activeProjectId]);
+
+  useEffect(() => {
     setRoleIndex(0);
   }, [locale, firstHeroSection?.id]);
 
@@ -1520,6 +1577,7 @@ function App() {
   }, [admin.isAdminMode, firstHeroSection?.props.roles, roleIndex]);
 
   const closeProject = () => {
+    setIsMobileMenuOpen(false);
     setActiveProjectId(null);
     window.setTimeout(() => {
       document.getElementById('works')?.scrollIntoView({ behavior: 'smooth' });
@@ -1680,7 +1738,12 @@ function App() {
                   onChange={(value) => patchHero(section.id, (props) => ({ ...props, based: value }))}
                 />
               </h1>
-              <a className="btn btn-primary" href={`mailto:${section.props.contactEmail}`}>
+              <a
+                className="btn btn-primary"
+                href="https://t.me/bimbiriim"
+                target="_blank"
+                rel="noreferrer"
+              >
                 <EditableText
                   as="span"
                   value={section.props.hireMe}
@@ -2025,7 +2088,12 @@ function App() {
                 onChange={(value) => patchCta(section.id, (props) => ({ ...props, line2: value }))}
               />
             </h2>
-            <a className="btn btn-primary" href={`mailto:${section.props.email}`}>
+            <a
+              className="btn btn-primary"
+              href="https://t.me/bimbiriim"
+              target="_blank"
+              rel="noreferrer"
+            >
               <EditableText
                 as="span"
                 value={section.props.button}
@@ -2556,26 +2624,58 @@ function App() {
 
       <header className="header">
         <div className="section-wrap header-inner">
-          <a className="brand" href="#top" aria-label="Homepage">
+          <a
+            className="brand"
+            href="#top"
+            aria-label="Homepage"
+            onClick={() => setIsMobileMenuOpen(false)}
+          >
             <span className="brand-main">Islam Gainullin</span>
             <span className="brand-sub">aka. bimbiriim</span>
             <sup>TM</sup>
           </a>
 
-          <nav className="main-nav" aria-label="Main navigation">
-            <a href="#works">{translation.nav.work}</a>
-            <a href="#services">{translation.nav.services}</a>
-            <a href="#reviews">{translation.nav.reviews}</a>
-          </nav>
+          <button
+            type="button"
+            className={`menu-toggle${isMobileMenuOpen ? ' active' : ''}`}
+            aria-expanded={isMobileMenuOpen}
+            aria-controls="main-navigation"
+            aria-label={isMobileMenuOpen ? translation.nav.closeMenu : translation.nav.openMenu}
+            onClick={() => setIsMobileMenuOpen((current) => !current)}
+          >
+            <span className="menu-toggle-line" />
+            <span className="menu-toggle-line" />
+            <span className="menu-toggle-line" />
+          </button>
 
-          <div className="header-actions">
-            <a className="btn btn-light" href="/Islam_Gainullin_Resume.pdf" download>
-              <span>{translation.nav.resume}</span>
-              <img src="/assets/icon-download.svg" alt="" aria-hidden="true" />
-            </a>
-            <a className="btn btn-outline" href="#contact">
-              {translation.nav.contact}
-            </a>
+          <div className={`header-menu${isMobileMenuOpen ? ' open' : ''}`}>
+            <nav className="main-nav" id="main-navigation" aria-label="Main navigation">
+              <a href="#works" onClick={() => setIsMobileMenuOpen(false)}>
+                {translation.nav.work}
+              </a>
+              <a href="#services" onClick={() => setIsMobileMenuOpen(false)}>
+                {translation.nav.services}
+              </a>
+              <a href="#reviews" onClick={() => setIsMobileMenuOpen(false)}>
+                {translation.nav.reviews}
+              </a>
+              <a href="#contact" onClick={() => setIsMobileMenuOpen(false)}>
+                {translation.nav.contact}
+              </a>
+            </nav>
+
+            <div className="header-actions">
+              <a
+                className="btn btn-light"
+                href="/Islam_Gainullin_Resume.pdf"
+                target="_blank"
+                rel="noreferrer"
+                onClick={() => setIsMobileMenuOpen(false)}
+              >
+                <span>{translation.nav.resume}</span>
+                <img src="/assets/icon-download.svg" alt="" aria-hidden="true" />
+              </a>
+            </div>
           </div>
         </div>
       </header>
@@ -2642,7 +2742,6 @@ function App() {
           </div>
           <div className="footer-bottom">
             <p>{translation.footer.signature}</p>
-            <button type="button">{translation.footer.licenses}</button>
           </div>
         </div>
       </footer>
