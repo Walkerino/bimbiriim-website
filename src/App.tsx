@@ -414,6 +414,7 @@ const API_BASE_PATH = '/api/content';
 const IMAGE_STORAGE_TARGET_BYTES = 220 * 1024;
 const IMAGE_MAX_DIMENSIONS = [1400, 1100, 900, 720, 560];
 const IMAGE_QUALITY_LEVELS = [0.88, 0.8, 0.72, 0.64, 0.56];
+const MAIN_PAGE_WORKS_LIMIT = 6;
 
 function cloneDeep<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
@@ -643,6 +644,43 @@ function collectProjectMedia(image: string, gallery: string[]): string[] {
     seen.add(normalized);
     return true;
   });
+}
+
+const WORKS_ROUTE_BASE = '/works';
+
+function normalizePathname(pathname: string): string {
+  if (!pathname || pathname === '/') {
+    return '/';
+  }
+
+  return pathname.replace(/\/+$/, '') || '/';
+}
+
+function parseAppRoute(pathname: string): { page: 'home' | 'works' | 'project'; projectId?: string } {
+  const normalizedPath = normalizePathname(pathname);
+  if (normalizedPath === WORKS_ROUTE_BASE) {
+    return { page: 'works' };
+  }
+
+  const projectPrefix = `${WORKS_ROUTE_BASE}/`;
+  if (normalizedPath.startsWith(projectPrefix)) {
+    const encodedProjectId = normalizedPath.slice(projectPrefix.length);
+    if (!encodedProjectId) {
+      return { page: 'works' };
+    }
+
+    try {
+      return { page: 'project', projectId: decodeURIComponent(encodedProjectId) };
+    } catch {
+      return { page: 'works' };
+    }
+  }
+
+  return { page: 'home' };
+}
+
+function buildProjectRoute(projectId: string): string {
+  return `${WORKS_ROUTE_BASE}/${encodeURIComponent(projectId)}`;
 }
 
 function normalizeSectionOrder(sections: PageSection[]): PageSection[] {
@@ -1620,6 +1658,22 @@ function App() {
   }, [activeProjectId, isWorksPageOpen]);
 
   useEffect(() => {
+    if (!admin.isAdminMode || !isWorksPageOpen || activeProject || !firstWorksSection) {
+      return;
+    }
+
+    if (selectedSectionId !== firstWorksSection.id) {
+      setSelectedSectionId(firstWorksSection.id);
+    }
+  }, [
+    admin.isAdminMode,
+    isWorksPageOpen,
+    activeProject,
+    firstWorksSection,
+    selectedSectionId
+  ]);
+
+  useEffect(() => {
     setRoleIndex(0);
   }, [locale, firstHeroSection?.id]);
 
@@ -1671,58 +1725,177 @@ function App() {
     };
   }, [admin.isAdminMode, firstHeroSection?.props.roles, roleIndex]);
 
-  const openProject = (projectId: string) => {
-    setIsMobileMenuOpen(false);
-    setActiveProjectId(projectId);
+  const updateBrowserUrl = (pathname: string, mode: 'push' | 'replace', hash = '') => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const normalizedPath = normalizePathname(pathname);
+    const search = window.location.search;
+    const nextUrl = `${normalizedPath}${search}${hash}`;
+    const currentUrl = `${normalizePathname(window.location.pathname)}${window.location.search}${
+      window.location.hash
+    }`;
+
+    if (nextUrl === currentUrl) {
+      return;
+    }
+
+    if (mode === 'replace') {
+      window.history.replaceState({}, '', nextUrl);
+      return;
+    }
+
+    window.history.pushState({}, '', nextUrl);
   };
 
-  const openWorksPage = () => {
+  const openProject = (
+    projectId: string,
+    options?: { fromWorksPage?: boolean; historyMode?: 'push' | 'replace' | 'none' }
+  ) => {
+    const fromWorksPage = options?.fromWorksPage ?? isWorksPageOpen;
+    const historyMode = options?.historyMode ?? 'push';
+
+    setIsMobileMenuOpen(false);
+    setIsWorksPageOpen(fromWorksPage);
+    setActiveProjectId(projectId);
+
+    if (admin.isAdminMode && fromWorksPage && firstWorksSection) {
+      setSelectedSectionId(firstWorksSection.id);
+    }
+
+    if (historyMode !== 'none') {
+      updateBrowserUrl(buildProjectRoute(projectId), historyMode);
+    }
+  };
+
+  const openWorksPage = (options?: { historyMode?: 'push' | 'replace' | 'none'; shouldScroll?: boolean }) => {
+    const historyMode = options?.historyMode ?? 'push';
+    const shouldScroll = options?.shouldScroll ?? true;
+
     setIsMobileMenuOpen(false);
     setActiveProjectId(null);
     setIsWorksPageOpen(true);
-    window.setTimeout(() => {
-      document.getElementById('all-works')?.scrollIntoView({ behavior: 'smooth' });
-    }, 0);
+
+    if (admin.isAdminMode && firstWorksSection) {
+      setSelectedSectionId(firstWorksSection.id);
+    }
+
+    if (historyMode !== 'none') {
+      updateBrowserUrl(WORKS_ROUTE_BASE, historyMode);
+    }
+
+    if (shouldScroll) {
+      window.setTimeout(() => {
+        document.getElementById('all-works')?.scrollIntoView({ behavior: 'smooth' });
+      }, 0);
+    }
   };
 
   const closeWorksPage = () => {
     setIsMobileMenuOpen(false);
     setActiveProjectId(null);
     setIsWorksPageOpen(false);
+    updateBrowserUrl('/', 'push', '#works');
     window.setTimeout(() => {
       document.getElementById('works')?.scrollIntoView({ behavior: 'smooth' });
     }, 0);
   };
 
-  const openMainContent = () => {
+  const openMainContent = (options?: {
+    historyMode?: 'push' | 'replace' | 'none';
+    hash?: string;
+    shouldScroll?: boolean;
+  }) => {
+    const historyMode = options?.historyMode ?? 'push';
+    const hash = options?.hash ?? '';
+    const shouldScroll = options?.shouldScroll ?? false;
+
     setIsMobileMenuOpen(false);
     setActiveProjectId(null);
     setIsWorksPageOpen(false);
+
+    if (historyMode !== 'none') {
+      updateBrowserUrl('/', historyMode, hash);
+    }
+
+    if (hash && shouldScroll) {
+      window.setTimeout(() => {
+        document.getElementById(hash.replace(/^#/, ''))?.scrollIntoView({ behavior: 'smooth' });
+      }, 0);
+    }
   };
 
   const navigateToMainSection =
     (sectionId: string) => (event: React.MouseEvent<HTMLAnchorElement | HTMLButtonElement>) => {
       event.preventDefault();
-      openMainContent();
-      window.setTimeout(() => {
-        document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth' });
-      }, 0);
+      openMainContent({ hash: `#${sectionId}`, shouldScroll: true });
     };
 
   const closeProject = () => {
     setIsMobileMenuOpen(false);
     setActiveProjectId(null);
     if (isWorksPageOpen) {
+      updateBrowserUrl(WORKS_ROUTE_BASE, 'replace');
       window.setTimeout(() => {
         document.getElementById('all-works')?.scrollIntoView({ behavior: 'smooth' });
       }, 0);
       return;
     }
 
+    updateBrowserUrl('/', 'replace', '#works');
     window.setTimeout(() => {
       document.getElementById('works')?.scrollIntoView({ behavior: 'smooth' });
     }, 0);
   };
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const applyRouteFromLocation = () => {
+      const route = parseAppRoute(window.location.pathname);
+
+      setIsMobileMenuOpen(false);
+
+      if (route.page === 'works') {
+        setActiveProjectId(null);
+        setIsWorksPageOpen(true);
+        return;
+      }
+
+      if (route.page === 'project' && route.projectId) {
+        const projectExists = worksItems.some((item) => item.id === route.projectId);
+        if (projectExists) {
+          setActiveProjectId(route.projectId);
+          setIsWorksPageOpen(true);
+          return;
+        }
+
+        setActiveProjectId(null);
+        setIsWorksPageOpen(true);
+        updateBrowserUrl(WORKS_ROUTE_BASE, 'replace');
+        return;
+      }
+
+      setActiveProjectId(null);
+      setIsWorksPageOpen(false);
+
+      const hashTarget = window.location.hash.replace(/^#/, '');
+      if (hashTarget) {
+        window.setTimeout(() => {
+          document.getElementById(hashTarget)?.scrollIntoView({ behavior: 'smooth' });
+        }, 0);
+      }
+    };
+
+    applyRouteFromLocation();
+    window.addEventListener('popstate', applyRouteFromLocation);
+    return () => {
+      window.removeEventListener('popstate', applyRouteFromLocation);
+    };
+  }, [worksItems]);
 
   const adminLoginForm = admin.canAccessControls && !admin.isAuthenticated ? (
     <div className="admin-toolbar admin-login-bar">
@@ -1945,7 +2118,7 @@ function App() {
               </div>
 
               <div className="works-grid">
-                {section.props.items.map((item, itemIndex) => (
+                {section.props.items.slice(0, MAIN_PAGE_WORKS_LIMIT).map((item, itemIndex) => (
                   <button
                     className="work-card"
                     key={`${section.id}-${item.id}-${itemIndex}`}
@@ -2825,7 +2998,7 @@ function App() {
                 href="/Islam_Gainullin_Resume.pdf"
                 target="_blank"
                 rel="noreferrer"
-                onClick={openMainContent}
+                onClick={() => openMainContent()}
               >
                 <span>{translation.nav.resume}</span>
                 <img src="/assets/icon-download.svg" alt="" aria-hidden="true" />
