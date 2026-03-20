@@ -8,6 +8,10 @@ const PORT = Number(process.env.PORT ?? 8787);
 const DB_PATH = process.env.DB_PATH ?? path.join(process.cwd(), 'data', 'content.db');
 const LOCALES = ['en', 'ru'];
 const COLLECTION_SECTION_TYPES = new Set(['works', 'services', 'reviews']);
+const CORS_ORIGINS = String(process.env.CORS_ORIGINS ?? '')
+  .split(',')
+  .map((value) => value.trim())
+  .filter(Boolean);
 
 fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 
@@ -236,6 +240,68 @@ app.use(
     limit: process.env.API_JSON_LIMIT ?? '30mb'
   })
 );
+
+function matchesWildcardOrigin(pattern, origin) {
+  if (!pattern.startsWith('*.')) {
+    return false;
+  }
+
+  const suffix = pattern.slice(2).toLowerCase();
+  if (!suffix) {
+    return false;
+  }
+
+  try {
+    const parsedOrigin = new URL(origin);
+    const hostname = parsedOrigin.hostname.toLowerCase();
+    return hostname.length > suffix.length && hostname.endsWith(`.${suffix}`);
+  } catch {
+    return false;
+  }
+}
+
+function isCorsOriginAllowed(origin) {
+  if (CORS_ORIGINS.length === 0) {
+    return false;
+  }
+
+  return CORS_ORIGINS.some((allowedOrigin) => {
+    if (allowedOrigin === '*') {
+      return true;
+    }
+
+    if (allowedOrigin === origin) {
+      return true;
+    }
+
+    return matchesWildcardOrigin(allowedOrigin, origin);
+  });
+}
+
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  const hasOriginHeader = typeof origin === 'string' && origin.length > 0;
+  const isAllowedOrigin = hasOriginHeader && isCorsOriginAllowed(origin);
+
+  if (isAllowedOrigin && hasOriginHeader) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  }
+
+  if (req.method === 'OPTIONS') {
+    if (!hasOriginHeader || isAllowedOrigin) {
+      res.status(204).end();
+      return;
+    }
+
+    res.status(403).json({ error: 'CORS origin is not allowed' });
+    return;
+  }
+
+  next();
+});
 
 function isLocale(locale) {
   return LOCALES.includes(locale);

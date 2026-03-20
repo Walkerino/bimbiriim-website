@@ -332,7 +332,10 @@ const SECTION_ANCHORS: Partial<Record<SectionType, string>> = {
 
 const ADMIN_AUTH_STORAGE_KEY = 'inline-admin-auth';
 const DEFAULT_ADMIN_PASSWORD = 'bimbiriim-admin';
-const API_BASE_PATH = '/api/content';
+const API_BASE_ORIGIN = (import.meta.env.VITE_API_BASE_URL ?? '').trim();
+const API_BASE_PATH = API_BASE_ORIGIN
+  ? `${API_BASE_ORIGIN.replace(/\/+$/, '')}/api/content`
+  : '/api/content';
 const API_REQUEST_TIMEOUT_MS = 20000;
 const INITIAL_CONTENT_FETCH_RETRIES = 2;
 const INITIAL_CONTENT_RETRY_DELAY_MS = 900;
@@ -389,7 +392,7 @@ async function requestJson<T>(input: string, init?: RequestInit): Promise<T> {
       throw new Error('API server timeout. Try again in a few seconds.');
     }
 
-    throw new Error('API server is unreachable. Start backend with `npm run dev:server`.');
+    throw new Error('API server is unreachable. Check API URL and backend availability.');
   } finally {
     if (timeoutId !== null) {
       globalThis.clearTimeout(timeoutId);
@@ -423,7 +426,7 @@ async function requestJson<T>(input: string, init?: RequestInit): Promise<T> {
       (/ECONNREFUSED/i.test(responseText) || /http proxy error/i.test(responseText));
 
     if (hasProxyRefusedConnection) {
-      throw new Error('API server is unreachable. Start backend with `npm run dev:server`.');
+      throw new Error('API server is unreachable. Check API URL and backend availability.');
     }
 
     throw new Error(serverMessage || `Request failed with status ${response.status}`);

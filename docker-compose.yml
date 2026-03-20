@@ -7,6 +7,7 @@ services:
     environment:
       PORT: "8787"
       DB_PATH: "/data/content.db"
+      CORS_ORIGINS: "${CORS_ORIGINS:-}"
     volumes:
       - content_data:/data
 
