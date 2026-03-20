@@ -1,44 +1,66 @@
 # bimbiriim-website
 
-Portfolio website implemented from Figma in React + TypeScript + Vite.
+Portfolio website on React + TypeScript + Vite with static content for GitHub Pages.
 
-## Features
+## Content Storage
 
-- Bilingual UI: English / Russian
-- Switzer variable font integration
-- Figma-based assets and layout
-- Hero typewriter animation with backspace cycle
-- Responsive behavior for desktop and mobile
+All live content is stored in:
 
-## Deployment: Vercel Frontend + External API
+- `public/content/site-content.json`
 
-Use this setup when frontend is hosted on Vercel and API/SQLite stays on your server.
+This file contains both locales (`en`, `ru`) with `draft` and `published` snapshots.
 
-### 1) Frontend on Vercel
+## Local Admin Workflow
 
-- Import this repository in Vercel.
-- Add environment variable in Vercel project settings:
-  - `VITE_API_BASE_URL=https://api.your-domain.com`
-- Redeploy.
-
-`VITE_API_BASE_URL` is optional for local dev. If omitted, frontend uses relative `/api/content` (works with Vite local proxy and single-host deployment).
-
-### 2) API on your server
-
-Run API with CORS allowlist, for example:
+1. Install and run:
 
 ```bash
-CORS_ORIGINS="https://your-project.vercel.app,https://your-domain.com,https://www.your-domain.com,*.vercel.app" \
+npm ci
+npm run dev
+```
+
+2. Open admin UI:
+
+- `http://localhost:5173/?admin=1`
+- Login password: `VITE_ADMIN_PASSWORD` (or fallback `bimbiriim-admin`)
+
+3. Edit content in admin mode:
+
+- `Save changes` keeps draft in browser `localStorage`
+- `Publish` updates local published snapshot
+- `Export JSON` downloads a full content file
+- `Import JSON` loads a previously exported file
+
+4. Replace repository file:
+
+- Copy downloaded JSON into `public/content/site-content.json`
+
+5. Commit and push to `main`.
+
+## GitHub Pages Deployment
+
+Deployment is automated by `.github/workflows/deploy.yml`.
+
+- Trigger: push to `main`
+- Build command: `npm run build:pages`
+- Artifact: `dist/` (with `404.html` SPA fallback)
+
+By default workflow builds for repository path:
+
+- `VITE_BASE_PATH=/<repo-name>/`
+
+If you use a custom domain/root hosting, set repository variable:
+
+- `VITE_BASE_PATH=/`
+
+## Optional Docker Preview
+
+Static preview with Nginx:
+
+```bash
 docker compose up -d --build
 ```
 
-Notes:
+Then open:
 
-- `CORS_ORIGINS` accepts comma-separated origins.
-- Wildcard patterns like `*.vercel.app` are supported for preview deployments.
-- SQLite stays on your server (`/data/content.db` volume), not on Vercel.
-
-### 3) DNS
-
-- Point `your-domain.com` to Vercel (frontend).
-- Point `api.your-domain.com` to your API server.
+- `http://localhost:8080`

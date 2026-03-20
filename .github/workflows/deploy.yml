@@ -1,4 +1,4 @@
-name: Deploy To Server
+name: Deploy To GitHub Pages
 
 on:
   push:
@@ -6,70 +6,53 @@ on:
       - main
   workflow_dispatch:
 
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
 concurrency:
-  group: production-deploy
+  group: github-pages
   cancel-in-progress: true
 
-env:
-  SERVER_HOST: 212.80.7.115
-  SERVER_PORT: ${{ secrets.SERVER_PORT || '22' }}
-  SERVER_USER: ${{ secrets.SERVER_USER }}
-  SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
-  SERVER_DEPLOY_PATH: ${{ secrets.SERVER_DEPLOY_PATH }}
-
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Validate deploy configuration
-        run: |
-          set -euo pipefail
-          for key in SERVER_HOST SERVER_USER SERVER_SSH_KEY SERVER_DEPLOY_PATH; do
-            if [ -z "${!key:-}" ]; then
-              echo "::error::Missing required GitHub secret/env: ${key}"
-              exit 1
-            fi
-          done
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
 
-      - name: Prepare SSH
-        run: |
-          set -euo pipefail
-          PORT="${SERVER_PORT}"
-          mkdir -p ~/.ssh
-          echo "${SERVER_SSH_KEY}" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -p "${PORT}" -H "${SERVER_HOST}" >> ~/.ssh/known_hosts
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
 
-      - name: Ensure remote directory exists
-        run: |
-          set -euo pipefail
-          PORT="${SERVER_PORT}"
-          ssh -p "${PORT}" "${SERVER_USER}@${SERVER_HOST}" "mkdir -p '${SERVER_DEPLOY_PATH}'"
+      - name: Install dependencies
+        run: npm ci
 
-      - name: Sync files to server
-        run: |
-          set -euo pipefail
-          PORT="${SERVER_PORT}"
-          rsync -az --delete \
-            --exclude ".git/" \
-            --exclude ".github/" \
-            --exclude "node_modules/" \
-            --exclude "dist/" \
-            --exclude "data/" \
-            -e "ssh -p ${PORT}" \
-            ./ "${SERVER_USER}@${SERVER_HOST}:${SERVER_DEPLOY_PATH}/"
+      - name: Build static site
+        env:
+          VITE_BASE_PATH: ${{ vars.VITE_BASE_PATH || format('/{0}/', github.event.repository.name) }}
+        run: npm run build:pages
 
-      - name: Deploy on server with Docker Compose
-        run: |
-          set -euo pipefail
-          PORT="${SERVER_PORT}"
-          ssh -p "${PORT}" "${SERVER_USER}@${SERVER_HOST}" <<EOF
-            set -euo pipefail
-            cd "${SERVER_DEPLOY_PATH}"
-            docker compose up -d --build --remove-orphans
-            docker image prune -f
-          EOF
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

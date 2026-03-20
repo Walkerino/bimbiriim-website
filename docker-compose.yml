@@ -1,31 +1,8 @@
 services:
-  api:
-    build:
-      context: .
-      dockerfile: Dockerfile.api
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:8787:8787"
-    environment:
-      PORT: "8787"
-      DB_PATH: "/data/content.db"
-      CORS_ORIGINS: "${CORS_ORIGINS:-}"
-    volumes:
-      - content_data:/data
-
   web:
     build:
       context: .
       dockerfile: Dockerfile.web
     restart: unless-stopped
-    depends_on:
-      - api
     ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - /etc/letsencrypt:/etc/letsencrypt:ro
-      - /var/www/certbot:/var/www/certbot:ro
-
-volumes:
-  content_data:
+      - "8080:80"

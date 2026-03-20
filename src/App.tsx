@@ -332,20 +332,22 @@ const SECTION_ANCHORS: Partial<Record<SectionType, string>> = {
 
 const ADMIN_AUTH_STORAGE_KEY = 'inline-admin-auth';
 const DEFAULT_ADMIN_PASSWORD = 'bimbiriim-admin';
-const API_BASE_ORIGIN = (import.meta.env.VITE_API_BASE_URL ?? '').trim();
-const API_BASE_PATH = API_BASE_ORIGIN
-  ? `${API_BASE_ORIGIN.replace(/\/+$/, '')}/api/content`
-  : '/api/content';
-const API_REQUEST_TIMEOUT_MS = 20000;
-const INITIAL_CONTENT_FETCH_RETRIES = 2;
-const INITIAL_CONTENT_RETRY_DELAY_MS = 900;
-const PUBLISHED_CONTENT_CACHE_STORAGE_KEY = 'published-content-cache-v1';
+const LOCAL_CONTENT_STORAGE_KEY = 'inline-admin-local-content-v1';
 const INITIAL_PRELOADER_MAX_WAIT_MS = 1800;
 const IMAGE_STORAGE_TARGET_BYTES = 220 * 1024;
 const IMAGE_MAX_DIMENSIONS = [1400, 1100, 900, 720, 560];
 const IMAGE_QUALITY_LEVELS = [0.88, 0.8, 0.72, 0.64, 0.56];
 const MAIN_PAGE_WORKS_LIMIT = 6;
 const SUPPORTED_LOCALES: Locale[] = ['en', 'ru'];
+const APP_BASE_PATH = (() => {
+  const raw = (import.meta.env.BASE_URL ?? '/').trim();
+  if (!raw || raw === '/') {
+    return '';
+  }
+
+  return `/${raw.replace(/^\/+|\/+$/g, '')}`;
+})();
+const STATIC_CONTENT_PATH = `${APP_BASE_PATH || ''}/content/site-content.json`;
 
 function cloneDeep<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
@@ -358,14 +360,12 @@ function buildInitialPages(): Record<Locale, PageData> {
   };
 }
 
-type ServerContentResponse = {
-  locale: Locale;
+type ContentSnapshot = {
   draft: PageData | null;
   published: PageData | null;
-  updatedAt: string | null;
 };
 
-type CachedPublishedPages = Partial<Record<Locale, PageData>>;
+type ContentBundle = Partial<Record<Locale, Partial<ContentSnapshot>>>;
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) {
@@ -373,72 +373,6 @@ function getErrorMessage(error: unknown): string {
   }
 
   return 'Unknown error';
-}
-
-async function requestJson<T>(input: string, init?: RequestInit): Promise<T> {
-  const controller = !init?.signal ? new AbortController() : null;
-  const timeoutId = controller
-    ? globalThis.setTimeout(() => controller.abort(), API_REQUEST_TIMEOUT_MS)
-    : null;
-
-  let response: Response;
-  try {
-    response = await fetch(input, {
-      ...init,
-      signal: init?.signal ?? controller?.signal
-    });
-  } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error('API server timeout. Try again in a few seconds.');
-    }
-
-    throw new Error('API server is unreachable. Check API URL and backend availability.');
-  } finally {
-    if (timeoutId !== null) {
-      globalThis.clearTimeout(timeoutId);
-    }
-  }
-
-  if (!response.ok) {
-    if (response.status === 413) {
-      throw new Error(
-        'Publish payload is too large. Reduce image sizes in content or increase Nginx `client_max_body_size`.'
-      );
-    }
-
-    const responseText = await response.text();
-    let serverMessage = '';
-
-    const contentType = response.headers.get('content-type') ?? '';
-    if (contentType.includes('application/json')) {
-      try {
-        const payload = JSON.parse(responseText) as { error?: string };
-        serverMessage = payload.error ?? '';
-      } catch {
-        serverMessage = '';
-      }
-    } else {
-      serverMessage = responseText.trim();
-    }
-
-    const hasProxyRefusedConnection =
-      response.status === 500 &&
-      (/ECONNREFUSED/i.test(responseText) || /http proxy error/i.test(responseText));
-
-    if (hasProxyRefusedConnection) {
-      throw new Error('API server is unreachable. Check API URL and backend availability.');
-    }
-
-    throw new Error(serverMessage || `Request failed with status ${response.status}`);
-  }
-
-  return (await response.json()) as T;
-}
-
-function wait(durationMs: number): Promise<void> {
-  return new Promise((resolve) => {
-    window.setTimeout(resolve, durationMs);
-  });
 }
 
 function normalizeServerPage(page: PageData | null, locale: Locale): PageData {
@@ -461,98 +395,185 @@ function normalizeServerPage(page: PageData | null, locale: Locale): PageData {
   };
 }
 
-function readCachedPublishedPages(): CachedPublishedPages {
+function withBasePath(path: string): string {
+  if (!path.startsWith('/')) {
+    return path;
+  }
+
+  if (!APP_BASE_PATH) {
+    return path;
+  }
+
+  if (path === APP_BASE_PATH || path.startsWith(`${APP_BASE_PATH}/`)) {
+    return path;
+  }
+
+  return `${APP_BASE_PATH}${path}`;
+}
+
+function stripBasePath(path: string): string {
+  if (!APP_BASE_PATH) {
+    return path;
+  }
+
+  if (path === APP_BASE_PATH) {
+    return '/';
+  }
+
+  if (path.startsWith(`${APP_BASE_PATH}/`)) {
+    return path.slice(APP_BASE_PATH.length) || '/';
+  }
+
+  return path;
+}
+
+function resolveContentPath(path: string): string {
+  const trimmed = path.trim();
+  if (!trimmed) {
+    return trimmed;
+  }
+
+  if (
+    /^(?:https?:|mailto:|tel:|data:|blob:)/i.test(trimmed) ||
+    trimmed.startsWith('//')
+  ) {
+    return trimmed;
+  }
+
+  if (trimmed.startsWith('/')) {
+    return withBasePath(trimmed);
+  }
+
+  return trimmed;
+}
+
+function normalizeContentBundle(bundle: unknown): {
+  draftPages: Record<Locale, PageData>;
+  publishedPages: Record<Locale, PageData>;
+} {
+  const draftPages = buildInitialPages();
+  const publishedPages = buildInitialPages();
+  const unwrapped =
+    bundle &&
+    typeof bundle === 'object' &&
+    'content' in (bundle as Record<string, unknown>) &&
+    (bundle as { content?: unknown }).content
+      ? (bundle as { content: unknown }).content
+      : bundle;
+  const source =
+    unwrapped && typeof unwrapped === 'object'
+      ? (unwrapped as Partial<Record<Locale, unknown>>)
+      : {};
+
+  SUPPORTED_LOCALES.forEach((supportedLocale) => {
+    const rawEntry = source[supportedLocale];
+    const entry =
+      rawEntry && typeof rawEntry === 'object' ? (rawEntry as Partial<ContentSnapshot>) : {};
+
+    const publishedCandidate = entry.published ?? entry.draft ?? null;
+    const draftCandidate = entry.draft ?? entry.published ?? null;
+
+    publishedPages[supportedLocale] = normalizeServerPage(
+      publishedCandidate as PageData | null,
+      supportedLocale
+    );
+    draftPages[supportedLocale] = normalizeServerPage(
+      draftCandidate as PageData | null,
+      supportedLocale
+    );
+  });
+
+  return { draftPages, publishedPages };
+}
+
+function buildContentBundle(
+  draftPages: Record<Locale, PageData>,
+  publishedPages: Record<Locale, PageData>
+): ContentBundle {
+  const payload: ContentBundle = {};
+
+  SUPPORTED_LOCALES.forEach((supportedLocale) => {
+    payload[supportedLocale] = {
+      draft: cloneDeep(draftPages[supportedLocale]),
+      published: cloneDeep(publishedPages[supportedLocale])
+    };
+  });
+
+  return payload;
+}
+
+function readLocalContentBundle(): { draftPages: Record<Locale, PageData>; publishedPages: Record<Locale, PageData> } | null {
   if (typeof window === 'undefined') {
-    return {};
+    return null;
   }
 
   try {
-    const raw = window.localStorage.getItem(PUBLISHED_CONTENT_CACHE_STORAGE_KEY);
+    const raw = window.localStorage.getItem(LOCAL_CONTENT_STORAGE_KEY);
     if (!raw) {
-      return {};
+      return null;
     }
 
-    const parsed = JSON.parse(raw) as Partial<Record<Locale, unknown>>;
-    const result: CachedPublishedPages = {};
-
-    SUPPORTED_LOCALES.forEach((supportedLocale) => {
-      const candidate = parsed[supportedLocale];
-      if (
-        candidate &&
-        typeof candidate === 'object' &&
-        Array.isArray((candidate as PageData).sections)
-      ) {
-        result[supportedLocale] = normalizeServerPage(candidate as PageData, supportedLocale);
-      }
-    });
-
-    return result;
+    return normalizeContentBundle(JSON.parse(raw) as unknown);
   } catch {
-    return {};
+    return null;
   }
 }
 
-function writeCachedPublishedPage(locale: Locale, page: PageData) {
+function writeLocalContentBundle(
+  draftPages: Record<Locale, PageData>,
+  publishedPages: Record<Locale, PageData>
+) {
   if (typeof window === 'undefined') {
     return;
   }
 
   try {
-    const cached = readCachedPublishedPages();
-    cached[locale] = cloneDeep(page);
-    window.localStorage.setItem(PUBLISHED_CONTENT_CACHE_STORAGE_KEY, JSON.stringify(cached));
+    const payload = buildContentBundle(draftPages, publishedPages);
+    window.localStorage.setItem(LOCAL_CONTENT_STORAGE_KEY, JSON.stringify(payload));
   } catch {
-    // Best effort cache only.
+    // Best effort persistence only.
   }
 }
 
-function buildInitialPublishedPages(): Record<Locale, PageData> {
-  const initial = buildInitialPages();
-  const cached = readCachedPublishedPages();
-
-  SUPPORTED_LOCALES.forEach((supportedLocale) => {
-    const cachedPage = cached[supportedLocale];
-    if (cachedPage) {
-      initial[supportedLocale] = cachedPage;
-    }
-  });
-
-  return initial;
-}
-
-async function fetchContentFromServer(locale: Locale): Promise<ServerContentResponse> {
-  let lastError: unknown = null;
-
-  for (let attempt = 0; attempt <= INITIAL_CONTENT_FETCH_RETRIES; attempt += 1) {
-    try {
-      return await requestJson<ServerContentResponse>(`${API_BASE_PATH}/${locale}`);
-    } catch (error) {
-      lastError = error;
-      if (attempt >= INITIAL_CONTENT_FETCH_RETRIES) {
-        break;
-      }
-
-      await wait(INITIAL_CONTENT_RETRY_DELAY_MS * (attempt + 1));
-    }
+function shouldUseLocalBundle(): boolean {
+  if (typeof window === 'undefined') {
+    return false;
   }
 
-  throw (lastError instanceof Error ? lastError : new Error('Unknown error'));
+  const params = new URLSearchParams(window.location.search);
+  return params.get('admin') === '1' || window.localStorage.getItem(ADMIN_AUTH_STORAGE_KEY) === '1';
 }
 
-async function saveDraftToServer(locale: Locale, page: PageData): Promise<ServerContentResponse> {
-  return requestJson<ServerContentResponse>(`${API_BASE_PATH}/${locale}/draft`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ page })
-  });
+async function fetchPublishedContentBundle() {
+  let response: Response;
+  try {
+    response = await fetch(STATIC_CONTENT_PATH, { cache: 'no-store' });
+  } catch {
+    throw new Error('Cannot load `public/content/site-content.json`.');
+  }
+
+  if (!response.ok) {
+    throw new Error(`Cannot load published content (HTTP ${response.status}).`);
+  }
+
+  const contentType = response.headers.get('content-type') ?? '';
+  if (!contentType.includes('application/json')) {
+    throw new Error('Published content file is not valid JSON.');
+  }
+
+  return normalizeContentBundle((await response.json()) as unknown);
 }
 
-async function publishToServer(locale: Locale, page: PageData): Promise<ServerContentResponse> {
-  return requestJson<ServerContentResponse>(`${API_BASE_PATH}/${locale}/publish`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ page })
-  });
+function downloadJsonFile(fileName: string, payload: unknown) {
+  const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = fileName;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
 }
 
 function estimateDataUriBytes(dataUri: string): number {
@@ -686,7 +707,7 @@ function normalizePathname(pathname: string): string {
 }
 
 function parseAppRoute(pathname: string): { page: 'home' | 'works' | 'project'; projectId?: string } {
-  const normalizedPath = normalizePathname(pathname);
+  const normalizedPath = normalizePathname(stripBasePath(pathname));
   if (normalizedPath === WORKS_ROUTE_BASE) {
     return { page: 'works' };
   }
@@ -986,16 +1007,17 @@ type EditableImageProps = {
 };
 
 function buildLocalWebpVariant(src: string): string | null {
-  if (!src.startsWith('/assets/')) {
+  const normalizedSrc = stripBasePath(src);
+  if (!normalizedSrc.startsWith('/assets/')) {
     return null;
   }
 
-  const match = src.match(/^([^?#]+)\.(png|jpe?g)([?#].*)?$/i);
+  const match = normalizedSrc.match(/^([^?#]+)\.(png|jpe?g)([?#].*)?$/i);
   if (!match) {
     return null;
   }
 
-  return `${match[1]}.webp${match[3] ?? ''}`;
+  return withBasePath(`${match[1]}.webp${match[3] ?? ''}`);
 }
 
 type OptimizedImageProps = {
@@ -1015,13 +1037,14 @@ function OptimizedImage({
   decoding = 'async',
   fetchPriority
 }: OptimizedImageProps) {
-  const webpVariant = buildLocalWebpVariant(src);
+  const resolvedSrc = resolveContentPath(src);
+  const webpVariant = buildLocalWebpVariant(resolvedSrc);
 
   return (
     <picture className="optimized-image">
       {webpVariant ? <source srcSet={webpVariant} type="image/webp" /> : null}
       <img
-        src={src}
+        src={resolvedSrc}
         alt={alt}
         className={className}
         loading={loading}
@@ -1261,9 +1284,7 @@ function AddSectionInsertion({ isAdminMode, onAdd }: AddSectionInsertionProps) {
 function App() {
   const locale: Locale = 'ru';
   const [pages, setPages] = useState<Record<Locale, PageData>>(() => buildInitialPages());
-  const [publishedPages, setPublishedPages] = useState<Record<Locale, PageData>>(() =>
-    buildInitialPublishedPages()
-  );
+  const [publishedPages, setPublishedPages] = useState<Record<Locale, PageData>>(() => buildInitialPages());
   const [savedPages, setSavedPages] = useState<Record<Locale, PageData>>(() => buildInitialPages());
   const [selectedSectionId, setSelectedSectionId] = useState<string | null>(null);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
@@ -1277,6 +1298,7 @@ function App() {
   const [passwordInput, setPasswordInput] = useState('');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isScrolledDown, setIsScrolledDown] = useState(false);
+  const importInputRef = useRef<HTMLInputElement | null>(null);
 
   const admin = useAdminMode();
   const translation = translations[locale];
@@ -1339,45 +1361,40 @@ function App() {
     const runInitialSync = async () => {
       setIsSyncing(true);
       try {
-        const response = await fetchContentFromServer(locale);
-        const nextPublished = normalizeServerPage(response.published, locale);
-        const nextDraft = normalizeServerPage(response.draft ?? response.published, locale);
+        const publishedBundle = await fetchPublishedContentBundle();
+        const localBundle = shouldUseLocalBundle() ? readLocalContentBundle() : null;
+
+        const nextPublishedPages = localBundle?.publishedPages ?? publishedBundle.publishedPages;
+        const nextDraftPages = localBundle?.draftPages ?? publishedBundle.draftPages;
 
         if (cancelled) {
           return;
         }
 
-        setPublishedPages((previous) => ({
-          ...previous,
-          [locale]: nextPublished
-        }));
-        setPages((previous) => ({
-          ...previous,
-          [locale]: cloneDeep(nextDraft)
-        }));
-        setSavedPages((previous) => ({
-          ...previous,
-          [locale]: cloneDeep(nextDraft)
-        }));
-        writeCachedPublishedPage(locale, nextPublished);
-        setPublishMessage('Server content loaded');
+        setPublishedPages(cloneDeep(nextPublishedPages));
+        setPages(cloneDeep(nextDraftPages));
+        setSavedPages(cloneDeep(nextDraftPages));
+        setPublishMessage(
+          localBundle
+            ? 'Loaded local browser draft. Export content before commit.'
+            : 'Published repository content loaded'
+        );
       } catch (error) {
         if (cancelled) {
           return;
         }
 
         const message = getErrorMessage(error);
-        const cachedPublished = readCachedPublishedPages()[locale];
-        if (cachedPublished) {
-          setPublishedPages((previous) => ({
-            ...previous,
-            [locale]: cachedPublished
-          }));
-          setPublishMessage(`Failed to load server content: ${message}. Showing cached content.`);
+        const localBundle = shouldUseLocalBundle() ? readLocalContentBundle() : null;
+        if (localBundle) {
+          setPublishedPages(cloneDeep(localBundle.publishedPages));
+          setPages(cloneDeep(localBundle.draftPages));
+          setSavedPages(cloneDeep(localBundle.draftPages));
+          setPublishMessage(`Using local browser draft (${message})`);
         } else {
-          setPublishMessage(`Failed to load server content: ${message}`);
+          setPublishMessage(`Load failed: ${message}`);
         }
-        console.error('Initial content sync failed', error);
+        console.error('Initial content load failed', error);
       } finally {
         window.clearTimeout(preloaderTimeoutId);
         if (!cancelled) {
@@ -1577,18 +1594,12 @@ function App() {
     const pageToSave = cloneDeep(editablePage);
     setIsSyncing(true);
     try {
-      const response = await saveDraftToServer(locale, pageToSave);
-      const nextDraft = normalizeServerPage(response.draft ?? pageToSave, locale);
-
-      setPages((previous) => ({
-        ...previous,
-        [locale]: cloneDeep(nextDraft)
-      }));
-      setSavedPages((previous) => ({
-        ...previous,
-        [locale]: cloneDeep(nextDraft)
-      }));
-      setPublishMessage('Draft saved to server');
+      const nextPages = cloneDeep(pages);
+      nextPages[locale] = pageToSave;
+      setPages(nextPages);
+      setSavedPages(cloneDeep(nextPages));
+      writeLocalContentBundle(nextPages, publishedPages);
+      setPublishMessage('Draft saved in browser');
     } catch (error) {
       setPublishMessage(`Save failed: ${getErrorMessage(error)}`);
     } finally {
@@ -1599,25 +1610,12 @@ function App() {
   const resetDraft = async () => {
     setIsSyncing(true);
     try {
-      const response = await fetchContentFromServer(locale);
-      const nextDraft = normalizeServerPage(response.draft ?? response.published, locale);
-      const nextPublished = normalizeServerPage(response.published, locale);
-
-      setPages((previous) => ({
-        ...previous,
-        [locale]: cloneDeep(nextDraft)
-      }));
-      setSavedPages((previous) => ({
-        ...previous,
-        [locale]: cloneDeep(nextDraft)
-      }));
-      setPublishedPages((previous) => ({
-        ...previous,
-        [locale]: cloneDeep(nextPublished)
-      }));
-      writeCachedPublishedPage(locale, nextPublished);
+      const nextDraftPages = cloneDeep(publishedPages);
+      setPages(nextDraftPages);
+      setSavedPages(cloneDeep(nextDraftPages));
+      writeLocalContentBundle(nextDraftPages, publishedPages);
       setSelectedSectionId(null);
-      setPublishMessage('Draft reloaded from server');
+      setPublishMessage('Draft reset to published content');
     } catch (error) {
       setPublishMessage(`Reset failed: ${getErrorMessage(error)}`);
     } finally {
@@ -1629,28 +1627,54 @@ function App() {
     const pageToPublish = cloneDeep(editablePage);
     setIsSyncing(true);
     try {
-      const response = await publishToServer(locale, pageToPublish);
-      const nextPublished = normalizeServerPage(response.published ?? pageToPublish, locale);
-      const nextDraft = normalizeServerPage(response.draft ?? nextPublished, locale);
+      const nextDraftPages = cloneDeep(pages);
+      const nextPublishedPages = cloneDeep(publishedPages);
+      nextDraftPages[locale] = pageToPublish;
+      nextPublishedPages[locale] = pageToPublish;
 
-      setPages((previous) => ({
-        ...previous,
-        [locale]: cloneDeep(nextDraft)
-      }));
-      setSavedPages((previous) => ({
-        ...previous,
-        [locale]: cloneDeep(nextDraft)
-      }));
-      setPublishedPages((previous) => ({
-        ...previous,
-        [locale]: cloneDeep(nextPublished)
-      }));
-      writeCachedPublishedPage(locale, nextPublished);
-      setPublishMessage(`Published at ${new Date().toLocaleTimeString()}`);
+      setPages(nextDraftPages);
+      setSavedPages(cloneDeep(nextDraftPages));
+      setPublishedPages(nextPublishedPages);
+      writeLocalContentBundle(nextDraftPages, nextPublishedPages);
+      setPublishMessage(`Published locally at ${new Date().toLocaleTimeString()}`);
     } catch (error) {
       setPublishMessage(`Publish failed: ${getErrorMessage(error)}`);
     } finally {
       setIsSyncing(false);
+    }
+  };
+
+  const exportContent = () => {
+    try {
+      const fileName = `site-content-${new Date().toISOString().slice(0, 10)}.json`;
+      const payload = buildContentBundle(pages, publishedPages);
+      downloadJsonFile(fileName, payload);
+      setPublishMessage(`Exported ${fileName}. Replace public/content/site-content.json`);
+    } catch (error) {
+      setPublishMessage(`Export failed: ${getErrorMessage(error)}`);
+    }
+  };
+
+  const handleImportContent = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    try {
+      const raw = await file.text();
+      const parsed = JSON.parse(raw) as unknown;
+      const normalized = normalizeContentBundle(parsed);
+      setPublishedPages(cloneDeep(normalized.publishedPages));
+      setPages(cloneDeep(normalized.draftPages));
+      setSavedPages(cloneDeep(normalized.draftPages));
+      setSelectedSectionId(null);
+      writeLocalContentBundle(normalized.draftPages, normalized.publishedPages);
+      setPublishMessage(`Imported ${file.name}`);
+    } catch (error) {
+      setPublishMessage(`Import failed: ${getErrorMessage(error)}`);
+    } finally {
+      event.target.value = '';
     }
   };
 
@@ -1821,7 +1845,7 @@ function App() {
       return;
     }
 
-    const normalizedPath = normalizePathname(pathname);
+    const normalizedPath = normalizePathname(withBasePath(normalizePathname(pathname)));
     const search = window.location.search;
     const nextUrl = `${normalizedPath}${search}${hash}`;
     const currentUrl = `${normalizePathname(window.location.pathname)}${window.location.search}${
@@ -2042,6 +2066,19 @@ function App() {
       <button type="button" className="admin-chip primary" onClick={publishDraft} disabled={isSyncing}>
         Publish
       </button>
+      <button type="button" className="admin-chip" onClick={exportContent} disabled={isSyncing}>
+        Export JSON
+      </button>
+      <button type="button" className="admin-chip" onClick={() => importInputRef.current?.click()} disabled={isSyncing}>
+        Import JSON
+      </button>
+      <input
+        ref={importInputRef}
+        type="file"
+        accept="application/json"
+        hidden
+        onChange={handleImportContent}
+      />
       <button
         type="button"
         className="admin-chip"
@@ -2053,7 +2090,7 @@ function App() {
         Logout
       </button>
       <span className="admin-status">
-        {isSyncing ? 'Syncing with server…' : publishMessage || (hasUnsavedChanges ? 'Unsaved changes' : 'Saved')}
+        {isSyncing ? 'Syncing local content…' : publishMessage || (hasUnsavedChanges ? 'Unsaved changes' : 'Saved')}
       </span>
     </div>
   ) : null;
@@ -3094,13 +3131,13 @@ function App() {
             <div className="header-actions">
               <a
                 className="btn btn-light"
-                href="/Islam_Gainullin_Resume.pdf"
+                href={resolveContentPath('/Islam_Gainullin_Resume.pdf')}
                 target="_blank"
                 rel="noreferrer"
                 onClick={() => openMainContent()}
               >
                 <span>{translation.nav.resume}</span>
-                <img src="/assets/icon-download.svg" alt="" aria-hidden="true" />
+                <img src={resolveContentPath('/assets/icon-download.svg')} alt="" aria-hidden="true" />
               </a>
             </div>
           </div>
@@ -3210,7 +3247,12 @@ function App() {
 
       <footer className="footer section-light" data-node-id="4003:148">
         <div className="section-wrap">
-          <img className="footer-line" src="/assets/footer-line.svg" alt="" aria-hidden="true" />
+          <img
+            className="footer-line"
+            src={resolveContentPath('/assets/footer-line.svg')}
+            alt=""
+            aria-hidden="true"
+          />
           <div className="footer-nav">
             {socials.map((social) => (
               <a key={social.label} href={social.href} target="_blank" rel="noreferrer">
