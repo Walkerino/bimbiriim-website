@@ -683,6 +683,14 @@ function buildProjectRoute(projectId: string): string {
   return `${WORKS_ROUTE_BASE}/${encodeURIComponent(projectId)}`;
 }
 
+function scrollWindowToTop(behavior: ScrollBehavior = 'auto') {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.scrollTo({ top: 0, left: 0, behavior });
+}
+
 function normalizeSectionOrder(sections: PageSection[]): PageSection[] {
   return [...sections]
     .sort((a, b) => a.order - b.order)
@@ -1237,8 +1245,10 @@ function App() {
   const [publishMessage, setPublishMessage] = useState('');
   const [isSyncing, setIsSyncing] = useState(false);
   const [isInitialLoading, setIsInitialLoading] = useState(true);
+  const [initialLoadError, setInitialLoadError] = useState('');
   const [passwordInput, setPasswordInput] = useState('');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isScrolledDown, setIsScrolledDown] = useState(false);
 
   const admin = useAdminMode();
   const translation = translations[locale];
@@ -1283,15 +1293,48 @@ function App() {
   const worksItems = firstWorksSection?.props.items ?? [];
   const worksTitle = firstWorksSection?.props.title ?? translation.nav.work;
   const activeProject = worksItems.find((item) => item.id === activeProjectId) ?? null;
+  const isMainPage = !isWorksPageOpen && !activeProject;
+  const hasScrolledHome = isMainPage && isScrolledDown;
 
   const hasUnsavedChanges = useMemo(() => {
     return JSON.stringify(editablePage) !== JSON.stringify(savedPage);
   }, [editablePage, savedPage]);
 
+  const syncFromServer = async () => {
+    setIsSyncing(true);
+    try {
+      const response = await fetchContentFromServer(locale);
+      const nextPublished = normalizeServerPage(response.published, locale);
+      const nextDraft = normalizeServerPage(response.draft ?? response.published, locale);
+
+      setPublishedPages((previous) => ({
+        ...previous,
+        [locale]: nextPublished
+      }));
+      setPages((previous) => ({
+        ...previous,
+        [locale]: cloneDeep(nextDraft)
+      }));
+      setSavedPages((previous) => ({
+        ...previous,
+        [locale]: cloneDeep(nextDraft)
+      }));
+      setInitialLoadError('');
+      setPublishMessage('Server content loaded');
+    } catch (error) {
+      const message = getErrorMessage(error);
+      setInitialLoadError(message);
+      setPublishMessage(`Failed to load server content: ${message}`);
+    } finally {
+      setIsSyncing(false);
+      setIsInitialLoading(false);
+    }
+  };
+
   useEffect(() => {
     let cancelled = false;
 
-    const syncFromServer = async () => {
+    const runInitialSync = async () => {
       setIsSyncing(true);
       try {
         const response = await fetchContentFromServer(locale);
@@ -1314,12 +1357,16 @@ function App() {
           ...previous,
           [locale]: cloneDeep(nextDraft)
         }));
+        setInitialLoadError('');
         setPublishMessage('Server content loaded');
       } catch (error) {
         if (cancelled) {
           return;
         }
-        setPublishMessage(`Failed to load server content: ${getErrorMessage(error)}`);
+
+        const message = getErrorMessage(error);
+        setInitialLoadError(message);
+        setPublishMessage(`Failed to load server content: ${message}`);
       } finally {
         if (!cancelled) {
           setIsSyncing(false);
@@ -1328,7 +1375,7 @@ function App() {
       }
     };
 
-    syncFromServer();
+    runInitialSync();
 
     return () => {
       cancelled = true;
@@ -1656,7 +1703,34 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const handleScroll = () => {
+      setIsScrolledDown(window.scrollY > 180);
+    };
+
+    handleScroll();
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => {
+      window.removeEventListener('scroll', handleScroll);
+    };
+  }, []);
+
+  useEffect(() => {
     setIsMobileMenuOpen(false);
+  }, [activeProjectId, isWorksPageOpen]);
+
+  useEffect(() => {
+    if (activeProjectId || isWorksPageOpen) {
+      scrollWindowToTop();
+      return;
+    }
+
+    if (!window.location.hash) {
+      scrollWindowToTop();
+    }
   }, [activeProjectId, isWorksPageOpen]);
 
   useEffect(() => {
@@ -2953,6 +3027,19 @@ function App() {
     );
   }
 
+  if (initialLoadError) {
+    return (
+      <div className={`site-preloader locale-${locale}`} role="alert" aria-live="assertive">
+        <div className="section-wrap" style={{ textAlign: 'center' }}>
+          <p>Failed to load server content: {initialLoadError}</p>
+          <button type="button" className="btn btn-primary" onClick={syncFromServer} disabled={isSyncing}>
+            {isSyncing ? 'Retrying…' : 'Retry loading'}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className={`site locale-${locale}`} data-node-id="4003:55">
       {adminLoginForm}
@@ -2960,7 +3047,7 @@ function App() {
       {renderSelectedSectionSettings()}
       {renderProjectAdminSettings()}
 
-      <header className="header">
+      <header className={`header${hasScrolledHome ? ' home-scrolled' : ''}`}>
         <div className="section-wrap header-inner">
           <a
             className="brand"
@@ -3107,6 +3194,17 @@ function App() {
           </>
         )}
       </main>
+
+      {isScrolledDown ? (
+        <button
+          type="button"
+          className="scroll-top-button"
+          aria-label="Scroll to top"
+          onClick={() => scrollWindowToTop('smooth')}
+        >
+          ↑
+        </button>
+      ) : null}
 
       <footer className="footer section-light" data-node-id="4003:148">
         <div className="section-wrap">
