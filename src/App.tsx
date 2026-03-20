@@ -145,46 +145,7 @@ const translations: Record<Locale, Translation> = {
       works: {
         title: 'Works',
         viewAll: 'View All',
-        items: [
-          {
-            id: 'pulse',
-            title: 'Pulse App',
-            category: 'Mobile App',
-            image: '/assets/work-1.png',
-            website: 'https://pulse.example.com',
-            description:
-              'A wellness tracking app that blends habit loops, daily insights, and calm UI to keep users consistent.',
-            gallery: ['/assets/work-1.png', '/assets/work-4.png', '/assets/work-3.png']
-          },
-          {
-            id: 'atelier',
-            title: 'Atelier Studio',
-            category: 'Brand Site',
-            image: '/assets/work-4.png',
-            website: 'https://atelier.example.com',
-            description:
-              'A bold portfolio site for a creative studio with editorial layouts, wide imagery, and clear CTAs.',
-            gallery: ['/assets/work-4.png', '/assets/work-5.png', '/assets/work-1.png']
-          },
-          {
-            id: 'drive',
-            title: 'Drive Control',
-            category: 'Dashboard',
-            image: '/assets/work-3.png',
-            description:
-              'A control dashboard for a logistics company with real-time KPIs, alerts, and route management.',
-            gallery: ['/assets/work-3.png', '/assets/work-1.png', '/assets/work-5.png']
-          },
-          {
-            id: 'nova',
-            title: 'Nova Commerce',
-            category: 'E-commerce',
-            image: '/assets/work-5.png',
-            description:
-              'A premium storefront with smooth product browsing, bold typography, and a focused checkout flow.',
-            gallery: ['/assets/work-5.png', '/assets/work-4.png', '/assets/work-3.png']
-          }
-        ]
+        items: []
       },
       services: {
         title: 'Services',
@@ -281,46 +242,7 @@ const translations: Record<Locale, Translation> = {
       works: {
         title: 'Работы',
         viewAll: 'Смотреть все',
-        items: [
-          {
-            id: 'pulse',
-            title: 'Pulse App',
-            category: 'Мобильное приложение',
-            image: '/assets/work-1.png',
-            website: 'https://pulse.example.com',
-            description:
-              'Трекер привычек и самочувствия с понятными инсайтами, спокойным интерфейсом и ежедневными ритуалами.',
-            gallery: ['/assets/work-1.png', '/assets/work-4.png', '/assets/work-3.png']
-          },
-          {
-            id: 'atelier',
-            title: 'Atelier Studio',
-            category: 'Сайт бренда',
-            image: '/assets/work-4.png',
-            website: 'https://atelier.example.com',
-            description:
-              'Портфолио-лендинг креативной студии с редакционными сетками, крупными визуалами и понятными CTA.',
-            gallery: ['/assets/work-4.png', '/assets/work-5.png', '/assets/work-1.png']
-          },
-          {
-            id: 'drive',
-            title: 'Drive Control',
-            category: 'Дашборд',
-            image: '/assets/work-3.png',
-            description:
-              'Панель управления логистикой с актуальными KPI, тревогами и маршрутизацией в одном экране.',
-            gallery: ['/assets/work-3.png', '/assets/work-1.png', '/assets/work-5.png']
-          },
-          {
-            id: 'nova',
-            title: 'Nova Commerce',
-            category: 'E-commerce',
-            image: '/assets/work-5.png',
-            description:
-              'Премиальный магазин с плавным каталогом, выразительной типографикой и фокусом на конверсии.',
-            gallery: ['/assets/work-5.png', '/assets/work-4.png', '/assets/work-3.png']
-          }
-        ]
+        items: []
       },
       services: {
         title: 'Услуги',
@@ -411,12 +333,16 @@ const SECTION_ANCHORS: Partial<Record<SectionType, string>> = {
 const ADMIN_AUTH_STORAGE_KEY = 'inline-admin-auth';
 const DEFAULT_ADMIN_PASSWORD = 'bimbiriim-admin';
 const API_BASE_PATH = '/api/content';
-const API_REQUEST_TIMEOUT_MS = 8000;
+const API_REQUEST_TIMEOUT_MS = 20000;
+const INITIAL_CONTENT_FETCH_RETRIES = 2;
+const INITIAL_CONTENT_RETRY_DELAY_MS = 900;
+const PUBLISHED_CONTENT_CACHE_STORAGE_KEY = 'published-content-cache-v1';
 const INITIAL_PRELOADER_MAX_WAIT_MS = 1800;
 const IMAGE_STORAGE_TARGET_BYTES = 220 * 1024;
 const IMAGE_MAX_DIMENSIONS = [1400, 1100, 900, 720, 560];
 const IMAGE_QUALITY_LEVELS = [0.88, 0.8, 0.72, 0.64, 0.56];
 const MAIN_PAGE_WORKS_LIMIT = 6;
+const SUPPORTED_LOCALES: Locale[] = ['en', 'ru'];
 
 function cloneDeep<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
@@ -435,6 +361,8 @@ type ServerContentResponse = {
   published: PageData | null;
   updatedAt: string | null;
 };
+
+type CachedPublishedPages = Partial<Record<Locale, PageData>>;
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) {
@@ -504,6 +432,12 @@ async function requestJson<T>(input: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
+function wait(durationMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, durationMs);
+  });
+}
+
 function normalizeServerPage(page: PageData | null, locale: Locale): PageData {
   if (!page || !Array.isArray(page.sections)) {
     return buildDefaultPage(locale);
@@ -524,8 +458,82 @@ function normalizeServerPage(page: PageData | null, locale: Locale): PageData {
   };
 }
 
+function readCachedPublishedPages(): CachedPublishedPages {
+  if (typeof window === 'undefined') {
+    return {};
+  }
+
+  try {
+    const raw = window.localStorage.getItem(PUBLISHED_CONTENT_CACHE_STORAGE_KEY);
+    if (!raw) {
+      return {};
+    }
+
+    const parsed = JSON.parse(raw) as Partial<Record<Locale, unknown>>;
+    const result: CachedPublishedPages = {};
+
+    SUPPORTED_LOCALES.forEach((supportedLocale) => {
+      const candidate = parsed[supportedLocale];
+      if (
+        candidate &&
+        typeof candidate === 'object' &&
+        Array.isArray((candidate as PageData).sections)
+      ) {
+        result[supportedLocale] = normalizeServerPage(candidate as PageData, supportedLocale);
+      }
+    });
+
+    return result;
+  } catch {
+    return {};
+  }
+}
+
+function writeCachedPublishedPage(locale: Locale, page: PageData) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  try {
+    const cached = readCachedPublishedPages();
+    cached[locale] = cloneDeep(page);
+    window.localStorage.setItem(PUBLISHED_CONTENT_CACHE_STORAGE_KEY, JSON.stringify(cached));
+  } catch {
+    // Best effort cache only.
+  }
+}
+
+function buildInitialPublishedPages(): Record<Locale, PageData> {
+  const initial = buildInitialPages();
+  const cached = readCachedPublishedPages();
+
+  SUPPORTED_LOCALES.forEach((supportedLocale) => {
+    const cachedPage = cached[supportedLocale];
+    if (cachedPage) {
+      initial[supportedLocale] = cachedPage;
+    }
+  });
+
+  return initial;
+}
+
 async function fetchContentFromServer(locale: Locale): Promise<ServerContentResponse> {
-  return requestJson<ServerContentResponse>(`${API_BASE_PATH}/${locale}`);
+  let lastError: unknown = null;
+
+  for (let attempt = 0; attempt <= INITIAL_CONTENT_FETCH_RETRIES; attempt += 1) {
+    try {
+      return await requestJson<ServerContentResponse>(`${API_BASE_PATH}/${locale}`);
+    } catch (error) {
+      lastError = error;
+      if (attempt >= INITIAL_CONTENT_FETCH_RETRIES) {
+        break;
+      }
+
+      await wait(INITIAL_CONTENT_RETRY_DELAY_MS * (attempt + 1));
+    }
+  }
+
+  throw (lastError instanceof Error ? lastError : new Error('Unknown error'));
 }
 
 async function saveDraftToServer(locale: Locale, page: PageData): Promise<ServerContentResponse> {
@@ -1251,7 +1259,7 @@ function App() {
   const locale: Locale = 'ru';
   const [pages, setPages] = useState<Record<Locale, PageData>>(() => buildInitialPages());
   const [publishedPages, setPublishedPages] = useState<Record<Locale, PageData>>(() =>
-    buildInitialPages()
+    buildInitialPublishedPages()
   );
   const [savedPages, setSavedPages] = useState<Record<Locale, PageData>>(() => buildInitialPages());
   const [selectedSectionId, setSelectedSectionId] = useState<string | null>(null);
@@ -1348,6 +1356,7 @@ function App() {
           ...previous,
           [locale]: cloneDeep(nextDraft)
         }));
+        writeCachedPublishedPage(locale, nextPublished);
         setPublishMessage('Server content loaded');
       } catch (error) {
         if (cancelled) {
@@ -1355,7 +1364,17 @@ function App() {
         }
 
         const message = getErrorMessage(error);
-        setPublishMessage(`Failed to load server content: ${message}`);
+        const cachedPublished = readCachedPublishedPages()[locale];
+        if (cachedPublished) {
+          setPublishedPages((previous) => ({
+            ...previous,
+            [locale]: cachedPublished
+          }));
+          setPublishMessage(`Failed to load server content: ${message}. Showing cached content.`);
+        } else {
+          setPublishMessage(`Failed to load server content: ${message}`);
+        }
+        console.error('Initial content sync failed', error);
       } finally {
         window.clearTimeout(preloaderTimeoutId);
         if (!cancelled) {
@@ -1593,6 +1612,7 @@ function App() {
         ...previous,
         [locale]: cloneDeep(nextPublished)
       }));
+      writeCachedPublishedPage(locale, nextPublished);
       setSelectedSectionId(null);
       setPublishMessage('Draft reloaded from server');
     } catch (error) {
@@ -1622,6 +1642,7 @@ function App() {
         ...previous,
         [locale]: cloneDeep(nextPublished)
       }));
+      writeCachedPublishedPage(locale, nextPublished);
       setPublishMessage(`Published at ${new Date().toLocaleTimeString()}`);
     } catch (error) {
       setPublishMessage(`Publish failed: ${getErrorMessage(error)}`);
