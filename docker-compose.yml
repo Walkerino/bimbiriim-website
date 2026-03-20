@@ -4,6 +4,8 @@ services:
       context: .
       dockerfile: Dockerfile.api
     restart: unless-stopped
+    ports:
+      - "127.0.0.1:8787:8787"
     environment:
       PORT: "8787"
       DB_PATH: "/data/content.db"
@@ -21,7 +23,6 @@ services:
     ports:
       - "80:80"
       - "443:443"
-      - "127.0.0.1:8787:8787"
     volumes:
       - /etc/letsencrypt:/etc/letsencrypt:ro
       - /var/www/certbot:/var/www/certbot:ro
