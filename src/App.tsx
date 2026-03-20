@@ -411,6 +411,8 @@ const SECTION_ANCHORS: Partial<Record<SectionType, string>> = {
 const ADMIN_AUTH_STORAGE_KEY = 'inline-admin-auth';
 const DEFAULT_ADMIN_PASSWORD = 'bimbiriim-admin';
 const API_BASE_PATH = '/api/content';
+const API_REQUEST_TIMEOUT_MS = 8000;
+const INITIAL_PRELOADER_MAX_WAIT_MS = 1800;
 const IMAGE_STORAGE_TARGET_BYTES = 220 * 1024;
 const IMAGE_MAX_DIMENSIONS = [1400, 1100, 900, 720, 560];
 const IMAGE_QUALITY_LEVELS = [0.88, 0.8, 0.72, 0.64, 0.56];
@@ -443,11 +445,27 @@ function getErrorMessage(error: unknown): string {
 }
 
 async function requestJson<T>(input: string, init?: RequestInit): Promise<T> {
+  const controller = !init?.signal ? new AbortController() : null;
+  const timeoutId = controller
+    ? globalThis.setTimeout(() => controller.abort(), API_REQUEST_TIMEOUT_MS)
+    : null;
+
   let response: Response;
   try {
-    response = await fetch(input, init);
-  } catch {
+    response = await fetch(input, {
+      ...init,
+      signal: init?.signal ?? controller?.signal
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error('API server timeout. Try again in a few seconds.');
+    }
+
     throw new Error('API server is unreachable. Start backend with `npm run dev:server`.');
+  } finally {
+    if (timeoutId !== null) {
+      globalThis.clearTimeout(timeoutId);
+    }
   }
 
   if (!response.ok) {
@@ -1245,7 +1263,6 @@ function App() {
   const [publishMessage, setPublishMessage] = useState('');
   const [isSyncing, setIsSyncing] = useState(false);
   const [isInitialLoading, setIsInitialLoading] = useState(true);
-  const [initialLoadError, setInitialLoadError] = useState('');
   const [passwordInput, setPasswordInput] = useState('');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isScrolledDown, setIsScrolledDown] = useState(false);
@@ -1300,39 +1317,13 @@ function App() {
     return JSON.stringify(editablePage) !== JSON.stringify(savedPage);
   }, [editablePage, savedPage]);
 
-  const syncFromServer = async () => {
-    setIsSyncing(true);
-    try {
-      const response = await fetchContentFromServer(locale);
-      const nextPublished = normalizeServerPage(response.published, locale);
-      const nextDraft = normalizeServerPage(response.draft ?? response.published, locale);
-
-      setPublishedPages((previous) => ({
-        ...previous,
-        [locale]: nextPublished
-      }));
-      setPages((previous) => ({
-        ...previous,
-        [locale]: cloneDeep(nextDraft)
-      }));
-      setSavedPages((previous) => ({
-        ...previous,
-        [locale]: cloneDeep(nextDraft)
-      }));
-      setInitialLoadError('');
-      setPublishMessage('Server content loaded');
-    } catch (error) {
-      const message = getErrorMessage(error);
-      setInitialLoadError(message);
-      setPublishMessage(`Failed to load server content: ${message}`);
-    } finally {
-      setIsSyncing(false);
-      setIsInitialLoading(false);
-    }
-  };
-
   useEffect(() => {
     let cancelled = false;
+    const preloaderTimeoutId = window.setTimeout(() => {
+      if (!cancelled) {
+        setIsInitialLoading(false);
+      }
+    }, INITIAL_PRELOADER_MAX_WAIT_MS);
 
     const runInitialSync = async () => {
       setIsSyncing(true);
@@ -1357,7 +1348,6 @@ function App() {
           ...previous,
           [locale]: cloneDeep(nextDraft)
         }));
-        setInitialLoadError('');
         setPublishMessage('Server content loaded');
       } catch (error) {
         if (cancelled) {
@@ -1365,9 +1355,9 @@ function App() {
         }
 
         const message = getErrorMessage(error);
-        setInitialLoadError(message);
         setPublishMessage(`Failed to load server content: ${message}`);
       } finally {
+        window.clearTimeout(preloaderTimeoutId);
         if (!cancelled) {
           setIsSyncing(false);
           setIsInitialLoading(false);
@@ -1379,6 +1369,7 @@ function App() {
 
     return () => {
       cancelled = true;
+      window.clearTimeout(preloaderTimeoutId);
     };
   }, []);
 
@@ -3023,19 +3014,6 @@ function App() {
     return (
       <div className={`site-preloader locale-${locale}`} role="status" aria-live="polite" aria-busy="true">
         <span className="site-preloader-spinner" aria-hidden="true" />
-      </div>
-    );
-  }
-
-  if (initialLoadError) {
-    return (
-      <div className={`site-preloader locale-${locale}`} role="alert" aria-live="assertive">
-        <div className="section-wrap" style={{ textAlign: 'center' }}>
-          <p>Failed to load server content: {initialLoadError}</p>
-          <button type="button" className="btn btn-primary" onClick={syncFromServer} disabled={isSyncing}>
-            {isSyncing ? 'Retrying…' : 'Retry loading'}
-          </button>
-        </div>
       </div>
     );
   }
