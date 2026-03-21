@@ -449,6 +449,12 @@ button {
   overflow: hidden;
 }
 
+.work-image-wrap .editable-image,
+.work-image-wrap .optimized-image {
+  width: 100%;
+  height: 100%;
+}
+
 .work-image-wrap img,
 .work-image-wrap video {
   width: 100%;
