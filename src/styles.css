@@ -631,6 +631,25 @@ button {
   animation-play-state: paused;
 }
 
+.reviews-marquee.manual {
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  scroll-snap-type: x mandatory;
+  padding: 0 20px;
+}
+
+.reviews-track.manual {
+  animation: none;
+  width: auto;
+  min-width: max-content;
+}
+
+.reviews-track.manual .review-card {
+  flex: 0 0 min(400px, calc(100vw - 52px));
+  scroll-snap-align: start;
+}
+
 .review-card {
   width: min(400px, calc(100vw - 52px));
   min-height: 271px;

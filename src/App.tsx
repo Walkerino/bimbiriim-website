@@ -336,6 +336,7 @@ const INITIAL_PRELOADER_MAX_WAIT_MS = 1800;
 const VIDEO_STORAGE_MAX_BYTES = 8 * 1024 * 1024;
 const MAIN_PAGE_WORKS_LIMIT = 6;
 const SUPPORTED_LOCALES: Locale[] = ['en', 'ru'];
+const REVIEWS_MOBILE_MEDIA_QUERY = '(max-width: 980px)';
 const APP_BASE_PATH = (() => {
   const raw = (import.meta.env.BASE_URL ?? '/').trim();
   if (!raw || raw === '/') {
@@ -874,6 +875,14 @@ function useAdminMode() {
   };
 }
 
+function isMobileReviewsViewport(): boolean {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+    return false;
+  }
+
+  return window.matchMedia(REVIEWS_MOBILE_MEDIA_QUERY).matches;
+}
+
 type EditableTextProps = {
   as?: 'span' | 'p' | 'strong' | 'h1' | 'h2' | 'h3' | 'div';
   value: string;
@@ -1249,6 +1258,7 @@ function App() {
   const [passwordInput, setPasswordInput] = useState('');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isScrolledDown, setIsScrolledDown] = useState(false);
+  const [isMobileReviews, setIsMobileReviews] = useState(() => isMobileReviewsViewport());
   const importInputRef = useRef<HTMLInputElement | null>(null);
 
   const admin = useAdminMode();
@@ -1260,6 +1270,24 @@ function App() {
   useEffect(() => {
     document.documentElement.lang = locale;
   }, [locale]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+      return;
+    }
+
+    const mediaQuery = window.matchMedia(REVIEWS_MOBILE_MEDIA_QUERY);
+    const update = () => {
+      setIsMobileReviews(mediaQuery.matches);
+    };
+
+    update();
+    mediaQuery.addEventListener('change', update);
+
+    return () => {
+      mediaQuery.removeEventListener('change', update);
+    };
+  }, []);
 
   const sections = useMemo(
     () => normalizeSectionOrder(currentPage.sections),
@@ -2348,7 +2376,9 @@ function App() {
     }
 
     if (section.type === 'reviews') {
-      const reviewTrack = [...section.props.items, ...section.props.items];
+      const reviewTrack = isMobileReviews ? section.props.items : [...section.props.items, ...section.props.items];
+      const marqueeClassName = `reviews-marquee${isMobileReviews ? ' manual' : ''}`;
+      const trackClassName = `reviews-track${isMobileReviews ? ' manual' : ''}`;
 
       return (
         <EditableSection
@@ -2374,8 +2404,8 @@ function App() {
               />
             </div>
 
-            <div className="reviews-marquee" aria-label="Client reviews">
-              <div className="reviews-track">
+            <div className={marqueeClassName} aria-label="Client reviews">
+              <div className={trackClassName}>
                 {reviewTrack.map((review, reviewIndex) => {
                   const sourceIndex = reviewIndex % section.props.items.length;
 
