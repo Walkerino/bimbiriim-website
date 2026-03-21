@@ -332,11 +332,7 @@ const SECTION_ANCHORS: Partial<Record<SectionType, string>> = {
 
 const ADMIN_AUTH_STORAGE_KEY = 'inline-admin-auth';
 const DEFAULT_ADMIN_PASSWORD = 'bimbiriim-admin';
-const LOCAL_CONTENT_STORAGE_KEY = 'inline-admin-local-content-v1';
 const INITIAL_PRELOADER_MAX_WAIT_MS = 1800;
-const IMAGE_STORAGE_TARGET_BYTES = 220 * 1024;
-const IMAGE_MAX_DIMENSIONS = [1400, 1100, 900, 720, 560];
-const IMAGE_QUALITY_LEVELS = [0.88, 0.8, 0.72, 0.64, 0.56];
 const VIDEO_STORAGE_MAX_BYTES = 8 * 1024 * 1024;
 const MAIN_PAGE_WORKS_LIMIT = 6;
 const SUPPORTED_LOCALES: Locale[] = ['en', 'ru'];
@@ -504,48 +500,6 @@ function buildContentBundle(
   return payload;
 }
 
-function readLocalContentBundle(): { draftPages: Record<Locale, PageData>; publishedPages: Record<Locale, PageData> } | null {
-  if (typeof window === 'undefined') {
-    return null;
-  }
-
-  try {
-    const raw = window.localStorage.getItem(LOCAL_CONTENT_STORAGE_KEY);
-    if (!raw) {
-      return null;
-    }
-
-    return normalizeContentBundle(JSON.parse(raw) as unknown);
-  } catch {
-    return null;
-  }
-}
-
-function writeLocalContentBundle(
-  draftPages: Record<Locale, PageData>,
-  publishedPages: Record<Locale, PageData>
-) {
-  if (typeof window === 'undefined') {
-    return;
-  }
-
-  try {
-    const payload = buildContentBundle(draftPages, publishedPages);
-    window.localStorage.setItem(LOCAL_CONTENT_STORAGE_KEY, JSON.stringify(payload));
-  } catch {
-    // Best effort persistence only.
-  }
-}
-
-function shouldUseLocalBundle(): boolean {
-  if (typeof window === 'undefined') {
-    return false;
-  }
-
-  const params = new URLSearchParams(window.location.search);
-  return params.get('admin') === '1' || window.localStorage.getItem(ADMIN_AUTH_STORAGE_KEY) === '1';
-}
-
 async function fetchPublishedContentBundle() {
   let response: Response;
   try {
@@ -606,16 +560,6 @@ function downloadJsonFile(fileName: string, payload: unknown) {
   URL.revokeObjectURL(url);
 }
 
-function estimateDataUriBytes(dataUri: string): number {
-  const commaIndex = dataUri.indexOf(',');
-  if (commaIndex < 0) {
-    return dataUri.length;
-  }
-
-  const payloadLength = dataUri.length - commaIndex - 1;
-  return Math.floor((payloadLength * 3) / 4);
-}
-
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -631,76 +575,12 @@ function readFileAsDataUrl(file: File): Promise<string> {
   });
 }
 
-function loadImageFromDataUrl(dataUrl: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const image = new Image();
-    image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error('Failed to process selected image'));
-    image.src = dataUrl;
-  });
-}
-
-function renderScaledImageDataUrl(
-  image: HTMLImageElement,
-  maxDimension: number,
-  quality: number
-): string {
-  const scale = Math.min(1, maxDimension / Math.max(image.width, image.height));
-  const width = Math.max(1, Math.round(image.width * scale));
-  const height = Math.max(1, Math.round(image.height * scale));
-
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-
-  const context = canvas.getContext('2d');
-  if (!context) {
-    return image.src;
-  }
-
-  context.imageSmoothingEnabled = true;
-  context.imageSmoothingQuality = 'high';
-  context.drawImage(image, 0, 0, width, height);
-  return canvas.toDataURL('image/webp', quality);
-}
-
 async function optimizeImageForStorage(file: File): Promise<string> {
   if (file.type.startsWith('video/') && file.size > VIDEO_STORAGE_MAX_BYTES) {
     throw new Error('Video file is too large. Use a URL to /assets/... instead.');
   }
 
-  const originalDataUrl = await readFileAsDataUrl(file);
-  if (!file.type.startsWith('image/')) {
-    return originalDataUrl;
-  }
-
-  let image: HTMLImageElement;
-  try {
-    image = await loadImageFromDataUrl(originalDataUrl);
-  } catch {
-    return originalDataUrl;
-  }
-
-  let bestDataUrl = originalDataUrl;
-  let bestSize = estimateDataUriBytes(originalDataUrl);
-
-  for (const maxDimension of IMAGE_MAX_DIMENSIONS) {
-    for (const quality of IMAGE_QUALITY_LEVELS) {
-      const candidate = renderScaledImageDataUrl(image, maxDimension, quality);
-      const candidateSize = estimateDataUriBytes(candidate);
-
-      if (candidateSize < bestSize) {
-        bestDataUrl = candidate;
-        bestSize = candidateSize;
-      }
-
-      if (candidateSize <= IMAGE_STORAGE_TARGET_BYTES) {
-        return candidate;
-      }
-    }
-  }
-
-  return bestDataUrl;
+  return readFileAsDataUrl(file);
 }
 
 function createId(prefix: string): string {
@@ -1433,10 +1313,8 @@ function App() {
       setIsSyncing(true);
       try {
         const publishedBundle = await fetchPublishedContentBundle();
-        const localBundle = shouldUseLocalBundle() ? readLocalContentBundle() : null;
-
-        const nextPublishedPages = localBundle?.publishedPages ?? publishedBundle.publishedPages;
-        const nextDraftPages = localBundle?.draftPages ?? publishedBundle.draftPages;
+        const nextPublishedPages = publishedBundle.publishedPages;
+        const nextDraftPages = publishedBundle.draftPages;
 
         if (cancelled) {
           return;
@@ -1445,26 +1323,14 @@ function App() {
         setPublishedPages(cloneDeep(nextPublishedPages));
         setPages(cloneDeep(nextDraftPages));
         setSavedPages(cloneDeep(nextDraftPages));
-        setPublishMessage(
-          localBundle
-            ? 'Loaded local browser draft. Export content before commit.'
-            : 'Published repository content loaded'
-        );
+        setPublishMessage('Content loaded from public/content/site-content.json');
       } catch (error) {
         if (cancelled) {
           return;
         }
 
         const message = getErrorMessage(error);
-        const localBundle = shouldUseLocalBundle() ? readLocalContentBundle() : null;
-        if (localBundle) {
-          setPublishedPages(cloneDeep(localBundle.publishedPages));
-          setPages(cloneDeep(localBundle.draftPages));
-          setSavedPages(cloneDeep(localBundle.draftPages));
-          setPublishMessage(`Using local browser draft (${message})`);
-        } else {
-          setPublishMessage(`Load failed: ${message}`);
-        }
+        setPublishMessage(`Load failed: ${message}`);
         console.error('Initial content load failed', error);
       } finally {
         window.clearTimeout(preloaderTimeoutId);
@@ -1669,8 +1535,7 @@ function App() {
       nextPages[locale] = pageToSave;
       setPages(nextPages);
       setSavedPages(cloneDeep(nextPages));
-      writeLocalContentBundle(nextPages, publishedPages);
-      setPublishMessage('Draft saved in browser');
+      setPublishMessage('Draft saved in session');
     } catch (error) {
       setPublishMessage(`Save failed: ${getErrorMessage(error)}`);
     } finally {
@@ -1684,7 +1549,6 @@ function App() {
       const nextDraftPages = cloneDeep(publishedPages);
       setPages(nextDraftPages);
       setSavedPages(cloneDeep(nextDraftPages));
-      writeLocalContentBundle(nextDraftPages, publishedPages);
       setSelectedSectionId(null);
       setPublishMessage('Draft reset to published content');
     } catch (error) {
@@ -1706,7 +1570,6 @@ function App() {
       setPages(nextDraftPages);
       setSavedPages(cloneDeep(nextDraftPages));
       setPublishedPages(nextPublishedPages);
-      writeLocalContentBundle(nextDraftPages, nextPublishedPages);
       setPublishMessage(`Published locally at ${new Date().toLocaleTimeString()}`);
     } catch (error) {
       setPublishMessage(`Publish failed: ${getErrorMessage(error)}`);
@@ -1750,8 +1613,7 @@ function App() {
       setPages(cloneDeep(normalized.draftPages));
       setSavedPages(cloneDeep(normalized.draftPages));
       setSelectedSectionId(null);
-      writeLocalContentBundle(normalized.draftPages, normalized.publishedPages);
-      setPublishMessage(`Imported ${file.name}`);
+      setPublishMessage(`Imported ${file.name}. Use Export JSON to persist to public/content.`);
     } catch (error) {
       setPublishMessage(`Import failed: ${getErrorMessage(error)}`);
     } finally {
