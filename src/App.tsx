@@ -337,6 +337,7 @@ const INITIAL_PRELOADER_MAX_WAIT_MS = 1800;
 const IMAGE_STORAGE_TARGET_BYTES = 220 * 1024;
 const IMAGE_MAX_DIMENSIONS = [1400, 1100, 900, 720, 560];
 const IMAGE_QUALITY_LEVELS = [0.88, 0.8, 0.72, 0.64, 0.56];
+const VIDEO_STORAGE_MAX_BYTES = 8 * 1024 * 1024;
 const MAIN_PAGE_WORKS_LIMIT = 6;
 const SUPPORTED_LOCALES: Locale[] = ['en', 'ru'];
 const APP_BASE_PATH = (() => {
@@ -348,6 +349,7 @@ const APP_BASE_PATH = (() => {
   return `/${raw.replace(/^\/+|\/+$/g, '')}`;
 })();
 const STATIC_CONTENT_PATH = `${APP_BASE_PATH || ''}/content/site-content.json`;
+const LOCAL_CONTENT_SAVE_PATH = '/__admin/content';
 
 function cloneDeep<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
@@ -564,6 +566,34 @@ async function fetchPublishedContentBundle() {
   return normalizeContentBundle((await response.json()) as unknown);
 }
 
+async function saveContentBundleToProject(payload: ContentBundle) {
+  let response: Response;
+  try {
+    response = await fetch(LOCAL_CONTENT_SAVE_PATH, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload)
+    });
+  } catch {
+    throw new Error('Local file-save endpoint is unavailable.');
+  }
+
+  if (!response.ok) {
+    let details = '';
+    try {
+      details = (await response.text()).trim();
+    } catch {
+      // Ignore response read failures and fall back to status only.
+    }
+
+    throw new Error(
+      details ? `Local save failed (HTTP ${response.status}): ${details}` : `Local save failed (HTTP ${response.status}).`
+    );
+  }
+}
+
 function downloadJsonFile(fileName: string, payload: unknown) {
   const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -635,6 +665,10 @@ function renderScaledImageDataUrl(
 }
 
 async function optimizeImageForStorage(file: File): Promise<string> {
+  if (file.type.startsWith('video/') && file.size > VIDEO_STORAGE_MAX_BYTES) {
+    throw new Error('Video file is too large. Use a URL to /assets/... instead.');
+  }
+
   const originalDataUrl = await readFileAsDataUrl(file);
   if (!file.type.startsWith('image/')) {
     return originalDataUrl;
@@ -694,6 +728,20 @@ function collectProjectMedia(image: string, gallery: string[]): string[] {
     seen.add(normalized);
     return true;
   });
+}
+
+function isVideoSource(src: string): boolean {
+  const normalized = src.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  if (normalized.startsWith('data:video/')) {
+    return true;
+  }
+
+  const withoutQueryOrHash = normalized.split('#')[0]?.split('?')[0] ?? normalized;
+  return /\.(mp4|webm|ogg|ogv|mov|m4v)$/i.test(withoutQueryOrHash);
 }
 
 const WORKS_ROUTE_BASE = '/works';
@@ -1007,6 +1055,10 @@ type EditableImageProps = {
 };
 
 function buildLocalWebpVariant(src: string): string | null {
+  if (isVideoSource(src)) {
+    return null;
+  }
+
   const normalizedSrc = stripBasePath(src);
   if (!normalizedSrc.startsWith('/assets/')) {
     return null;
@@ -1027,6 +1079,7 @@ type OptimizedImageProps = {
   loading?: 'eager' | 'lazy';
   decoding?: 'async' | 'sync' | 'auto';
   fetchPriority?: 'high' | 'low' | 'auto';
+  videoControls?: boolean;
 };
 
 function OptimizedImage({
@@ -1035,10 +1088,28 @@ function OptimizedImage({
   className,
   loading,
   decoding = 'async',
-  fetchPriority
+  fetchPriority,
+  videoControls = false
 }: OptimizedImageProps) {
   const resolvedSrc = resolveContentPath(src);
+  const isVideo = isVideoSource(resolvedSrc);
   const webpVariant = buildLocalWebpVariant(resolvedSrc);
+
+  if (isVideo) {
+    return (
+      <video
+        src={resolvedSrc}
+        aria-label={alt}
+        className={className}
+        playsInline
+        controls={videoControls}
+        autoPlay={!videoControls}
+        muted={!videoControls}
+        loop={!videoControls}
+        preload={loading === 'eager' ? 'auto' : 'metadata'}
+      />
+    );
+  }
 
   return (
     <picture className="optimized-image">
@@ -1076,15 +1147,15 @@ function EditableImage({
     try {
       const nextSrc = await optimizeImageForStorage(file);
       onChange(nextSrc);
-    } catch {
-      window.alert('Failed to process this image. Try another file.');
+    } catch (error) {
+      window.alert(getErrorMessage(error));
     } finally {
       event.target.value = '';
     }
   };
 
   const changeFromUrl = () => {
-    const next = window.prompt('Paste image URL', src);
+    const next = window.prompt('Paste media URL (image/video)', src);
     if (next && next.trim()) {
       onChange(next.trim());
     }
@@ -1108,7 +1179,7 @@ function EditableImage({
           <button type="button" onClick={changeFromUrl}>
             URL
           </button>
-          <input ref={inputRef} type="file" accept="image/*" hidden onChange={handleFileChange} />
+          <input ref={inputRef} type="file" accept="image/*,video/*" hidden onChange={handleFileChange} />
         </span>
       ) : null}
     </span>
@@ -1133,8 +1204,8 @@ function AdminImageField({ label, value, onChange }: AdminImageFieldProps) {
     try {
       const nextSrc = await optimizeImageForStorage(file);
       onChange(nextSrc);
-    } catch {
-      window.alert('Failed to process this image. Try another file.');
+    } catch (error) {
+      window.alert(getErrorMessage(error));
     } finally {
       event.target.value = '';
     }
@@ -1146,12 +1217,12 @@ function AdminImageField({ label, value, onChange }: AdminImageFieldProps) {
       <input
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        placeholder="Image URL or data URI"
+        placeholder="Media URL or data URI"
       />
       <button type="button" className="admin-chip" onClick={() => fileInputRef.current?.click()}>
-        Upload image
+        Upload media
       </button>
-      <input ref={fileInputRef} type="file" accept="image/*" hidden onChange={handleFileChange} />
+      <input ref={fileInputRef} type="file" accept="image/*,video/*" hidden onChange={handleFileChange} />
     </label>
   );
 }
@@ -1644,14 +1715,24 @@ function App() {
     }
   };
 
-  const exportContent = () => {
+  const exportContent = async () => {
+    setIsSyncing(true);
     try {
       const fileName = `site-content-${new Date().toISOString().slice(0, 10)}.json`;
       const payload = buildContentBundle(pages, publishedPages);
-      downloadJsonFile(fileName, payload);
-      setPublishMessage(`Exported ${fileName}. Replace public/content/site-content.json`);
+      try {
+        await saveContentBundleToProject(payload);
+        setPublishMessage('Saved to public/content/site-content.json');
+      } catch (saveError) {
+        downloadJsonFile(fileName, payload);
+        setPublishMessage(
+          `Exported ${fileName}. Auto-save unavailable (${getErrorMessage(saveError)}). Replace public/content/site-content.json`
+        );
+      }
     } catch (error) {
       setPublishMessage(`Export failed: ${getErrorMessage(error)}`);
+    } finally {
+      setIsSyncing(false);
     }
   };
 
@@ -2690,7 +2771,7 @@ function App() {
                 placeholder="Website URL"
               />
               <AdminImageField
-                label="Cover image"
+                label="Cover media"
                 value={work.image}
                 onChange={(nextSrc) =>
                   patchWorkItem(selectedSection.id, work.id, (item) => ({
@@ -2700,11 +2781,11 @@ function App() {
                 }
               />
               <div className="drawer-subsection">
-                <strong>Gallery images</strong>
+                <strong>Gallery media</strong>
                 {work.gallery.map((galleryImage, galleryIndex) => (
                   <div className="drawer-inline" key={`${work.id}-gallery-${galleryIndex}`}>
                     <AdminImageField
-                      label={`Image ${galleryIndex + 1}`}
+                      label={`Media ${galleryIndex + 1}`}
                       value={galleryImage}
                       onChange={(nextSrc) =>
                         patchWorkItem(selectedSection.id, work.id, (item) => ({
@@ -2725,7 +2806,7 @@ function App() {
                         }))
                       }
                     >
-                      Remove image
+                      Remove media
                     </button>
                   </div>
                 ))}
@@ -2739,7 +2820,7 @@ function App() {
                     }))
                   }
                 >
-                  Add gallery image
+                  Add gallery media
                 </button>
               </div>
               <button
@@ -3017,16 +3098,16 @@ function App() {
           />
         </label>
         <AdminImageField
-          label="Cover image"
+          label="Cover media"
           value={activeProject.image}
           onChange={(nextSrc) => updateActiveProject((project) => ({ ...project, image: nextSrc }))}
         />
         <div className="drawer-subsection">
-          <strong>Gallery images</strong>
+          <strong>Gallery media</strong>
           {activeProject.gallery.map((image, index) => (
             <div className="drawer-inline" key={`${activeProject.id}-project-gallery-${index}`}>
               <AdminImageField
-                label={`Image ${index + 1}`}
+                label={`Media ${index + 1}`}
                 value={image}
                 onChange={(nextSrc) =>
                   updateActiveProject((project) => ({
@@ -3047,7 +3128,7 @@ function App() {
                   }))
                 }
               >
-                Remove image
+                Remove media
               </button>
             </div>
           ))}
@@ -3061,7 +3142,7 @@ function App() {
               }))
             }
           >
-            Add gallery image
+            Add gallery media
           </button>
         </div>
         <button type="button" className="admin-chip" onClick={closeProject}>
@@ -3170,7 +3251,8 @@ function App() {
                   <div className="project-media-item" key={`${image}-${index}`}>
                     <OptimizedImage
                       src={image}
-                      alt={`${activeProject.title} image ${index + 1}`}
+                      alt={`${activeProject.title} media ${index + 1}`}
+                      videoControls
                       loading={index === 0 ? 'eager' : 'lazy'}
                       decoding="async"
                       fetchPriority={index === 0 ? 'high' : 'low'}
