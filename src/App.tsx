@@ -234,7 +234,7 @@ const translations: Record<Locale, Translation> = {
         introConnector: 'я',
         name: 'Ислам',
         roles: ['Диджитал дизайнер', 'Веб-разработчик'],
-        based: 'Из Казани',
+        based: 'Из Москвы',
         hireMe: 'Газ работать!',
         accentImage: '/assets/hero-accent.png',
         contactEmail: 'walkerino.web@gmail.com'
